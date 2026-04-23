@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "MoPNG Desktop - 模图桌面版",
+        "title": "",
         "width": 1400,
         "height": 900,
         "minWidth": 1000,
