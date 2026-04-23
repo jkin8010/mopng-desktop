@@ -18,9 +18,10 @@ export function TitleBar() {
 
   return (
     <div
+      data-tauri-drag-region
       className={`h-8 flex items-center justify-between bg-background/80 backdrop-blur-sm border-b border-border/50 select-none ${leftPadding} ${rightPadding}`}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" data-tauri-drag-region>
         <Image className="w-4 h-4 text-primary" />
         <span className="text-sm font-semibold">MoPNG Desktop</span>
         <span className="text-xs text-muted-foreground ml-1">模图桌面版</span>
