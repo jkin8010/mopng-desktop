@@ -90,15 +90,17 @@
   background-color: #fff;
 }
 
-/* App region for drag */
-.app-region-drag {
-  app-region: drag;
-  -webkit-app-region: drag;
+/* App region for drag (Tauri v2 uses data-tauri-drag-region attribute) */
+
+/* Window border radius for macOS */
+html, body, #root {
+  border-radius: 10px;
+  overflow: hidden;
 }
 
-.app-region-no-drag {
-  app-region: no-drag;
-  -webkit-app-region: no-drag;
+/* Ensure window has rounded corners on macOS */
+.tauri-window {
+  border-radius: 10px;
 }
 
 /* Drop zone animation */

@@ -25,15 +25,15 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="h-10 flex items-center justify-between bg-muted/50 border-b border-border select-none app-region-drag"
+      className="h-10 flex items-center justify-between bg-muted/50 border-b border-border select-none"
     >
-      <div className="flex items-center gap-2 px-3">
+      <div className="flex items-center gap-2 px-3" data-tauri-drag-region>
         <Image className="w-5 h-5 text-primary" />
         <span className="text-sm font-semibold">MoPNG Desktop</span>
         <span className="text-xs text-muted-foreground ml-1">模图桌面版</span>
       </div>
 
-      <div className="flex items-center app-region-no-drag">
+      <div className="flex items-center" data-tauri-drag-region="false">
         <button
           onClick={handleMinimize}
           className="w-12 h-10 flex items-center justify-center hover:bg-muted transition-colors"
