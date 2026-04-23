@@ -1,5 +1,6 @@
 import { Image } from "lucide-react";
 import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export function TitleBar() {
   const [platform, setPlatform] = useState<"macos" | "windows" | "linux" | "unknown">("unknown");
@@ -11,6 +12,13 @@ export function TitleBar() {
     else if (ua.includes("linux")) setPlatform("linux");
   }, []);
 
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // 只有左键点击才触发拖拽
+    if (e.button === 0) {
+      getCurrentWindow().startDragging();
+    }
+  };
+
   // macOS: 左侧留出 ~80px 安全区（红绿灯按钮）
   // Windows/Linux: 右侧留出 ~140px 安全区（最小化/最大化/关闭按钮）
   const leftPadding = platform === "macos" ? "pl-20" : "pl-3";
@@ -18,10 +26,11 @@ export function TitleBar() {
 
   return (
     <div
-      data-tauri-drag-region
       className={`h-8 flex items-center justify-between bg-background/80 backdrop-blur-sm border-b border-border/50 select-none ${leftPadding} ${rightPadding}`}
+      style={{ WebkitAppRegion: "drag", appRegion: "drag" } as React.CSSProperties}
+      onMouseDown={handleMouseDown}
     >
-      <div className="flex items-center gap-2" data-tauri-drag-region>
+      <div className="flex items-center gap-2">
         <Image className="w-4 h-4 text-primary" />
         <span className="text-sm font-semibold">MoPNG Desktop</span>
         <span className="text-xs text-muted-foreground ml-1">模图桌面版</span>

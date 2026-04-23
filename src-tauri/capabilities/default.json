@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "默认能力集",
   "windows": ["main"],
-  "permissions": [
+    "permissions": [
     "core:default",
     "dialog:default",
     "fs:default",
@@ -13,6 +13,7 @@
     "fs:allow-copy-file",
     "fs:allow-remove",
     "shell:default",
-    "shell:allow-open"
+    "shell:allow-open",
+    "window:allow-start-dragging"
   ]
 }
