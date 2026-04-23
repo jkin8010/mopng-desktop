@@ -1,4 +1,3 @@
-import { Image } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -30,7 +29,12 @@ export function TitleBar() {
       onMouseDown={handleMouseDown}
     >
       <div className="flex items-center gap-2">
-        <Image className="w-4 h-4 text-primary" />
+        <img
+          src="/logo.png"
+          alt="MoPNG"
+          className="w-5 h-5 object-contain"
+          draggable={false}
+        />
         <span className="text-sm font-semibold">MoPNG Desktop</span>
         <span className="text-xs text-muted-foreground ml-1">模图桌面版</span>
       </div>
