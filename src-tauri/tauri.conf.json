@@ -18,15 +18,10 @@
         "height": 900,
         "minWidth": 1000,
         "minHeight": 700,
-        "decorations": false,
-        "transparent": true,
-        "shadow": true,
+        "decorations": true,
+        "transparent": false,
         "center": true,
-        "dragDropEnabled": true,
-        "windowEffects": {
-          "effects": ["hudWindow"],
-          "state": "active"
-        }
+        "dragDropEnabled": true
       }
     ],
     "security": {

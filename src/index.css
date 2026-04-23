@@ -92,17 +92,6 @@
 
 /* App region for drag (Tauri v2 uses data-tauri-drag-region attribute) */
 
-/* Window border radius for macOS */
-html, body, #root {
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-/* Ensure window has rounded corners on macOS */
-.tauri-window {
-  border-radius: 10px;
-}
-
 /* Drop zone animation */
 @keyframes drop-pulse {
   0%, 100% {
