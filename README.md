@@ -89,12 +89,12 @@ mkdir -p ~/.mopng-desktop/models
 
 # 下载模型 (约 400MB)
 curl -L -o ~/.mopng-desktop/models/birefnet.onnx \
-  "https://huggingface.co/ZhengPeng7/BiRefNet/resolve/main/model.onnx"
+  "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx"
 
 # 或使用 Python 下载
 python3 -c "
 from huggingface_hub import hf_hub_download
-hf_hub_download(repo_id='ZhengPeng7/BiRefNet', filename='model.onnx',
+hf_hub_download(repo_id='onnx-community/BiRefNet_lite-ONNX', filename='onnx/model.onnx',
                 local_dir='~/.mopng-desktop/models')
 "
 ```
