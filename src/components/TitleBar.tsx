@@ -27,7 +27,6 @@ export function TitleBar() {
   return (
     <div
       className={`h-8 flex items-center justify-between bg-background/80 backdrop-blur-sm border-b border-border/50 select-none ${leftPadding} ${rightPadding}`}
-      style={{ WebkitAppRegion: "drag", appRegion: "drag" } as React.CSSProperties}
       onMouseDown={handleMouseDown}
     >
       <div className="flex items-center gap-2">
