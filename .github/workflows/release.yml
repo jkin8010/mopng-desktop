@@ -52,19 +52,19 @@ jobs:
             name: macOS-Apple-Silicon
             target: aarch64-apple-darwin
 
-          # macOS Intel (x64)
+          # macOS Intel (x64) - tract-onnx 支持全平台
           - platform: macos-latest
             args: '--target x86_64-apple-darwin'
             name: macOS-Intel
             target: x86_64-apple-darwin
 
-          # Linux
+          # Linux - tract-onnx 支持
           - platform: ubuntu-22.04
             args: ''
             name: Linux
             target: ''
 
-          # Windows
+          # Windows - tract-onnx 支持
           - platform: windows-latest
             args: ''
             name: Windows

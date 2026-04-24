@@ -1,8 +1,6 @@
 use image::DynamicImage;
-use ort::ep::{CoreML, CUDA, DirectML, CPU, ExecutionProviderDispatch};
-use ort::session::Session;
-use ort::session::builder::GraphOptimizationLevel;
 use std::path::PathBuf;
+use tract_onnx::prelude::*;
 
 #[derive(Debug, Clone)]
 pub enum OptLevel {
@@ -59,7 +57,7 @@ impl SessionOptions {
 }
 
 pub struct BaseSession {
-    pub inner_session: Session,
+    pub inner_session: SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>,
     pub model_path: String,
 }
 
@@ -71,62 +69,25 @@ impl BaseSession {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         log::info!("正在加载模型: {:?}", model_path);
 
-        let mut session_builder = Session::builder()?;
+        let mut model = tract_onnx::onnx()
+            .model_for_path(&model_path)?;
 
-        if let Some(opt_level) = session_options.opt_level {
-            session_builder = session_builder.with_optimization_level(match opt_level {
-                OptLevel::Disable => GraphOptimizationLevel::Disable,
-                OptLevel::Level1 => GraphOptimizationLevel::Level1,
-                OptLevel::Level2 => GraphOptimizationLevel::Level2,
-                OptLevel::Level3 => GraphOptimizationLevel::Level3,
-            })?;
-        }
+        // 设置输入形状 (batch=1, channels=3, height=1024, width=1024)
+        model = model.with_input_fact(0, f32::fact([1, 3, 1024, 1024]).into())?;
 
-        session_builder = session_builder.with_intra_threads(
-            if session_options.num_threads == 0 { 1 } else { session_options.num_threads }
-        )?;
+        // 优化模型
+        let model = model.into_optimized()?;
 
-        let providers = session_options
-            .providers
-            .unwrap_or(vec!["cpu".to_owned()])
-            .iter()
-            .map(|provider| match provider.as_str() {
-                "coreml" => CoreML::default().build(),
-                "cuda" => CUDA::default().build(),
-                "directml" => DirectML::default().build(),
-                _ => CPU::default().build(),
-            })
-            .collect::<Vec<ExecutionProviderDispatch>>();
+        // 编译为可运行模型
+        let plan = model.into_runnable()?;
 
-        session_builder = session_builder.with_execution_providers(providers)?;
-
-        let session = session_builder.commit_from_file(model_path.clone())?;
         log::info!("模型加载成功");
 
         Ok(Self {
-            inner_session: session,
+            inner_session: plan,
             model_path: model_path.to_string_lossy().to_string(),
         })
     }
-
-    pub fn get_session(&mut self) -> Option<&mut Session> {
-        Some(&mut self.inner_session)
-    }
-}
-
-pub trait BaseSessionTrait {
-    fn get_session(&mut self) -> Option<&mut Session>;
-
-    fn run(
-        &self,
-        original_image: DynamicImage,
-    ) -> Result<ndarray::Array3<u8>, Box<dyn std::error::Error>>;
-
-    fn post_process(
-        &self,
-        output: ndarray::Array3<u8>,
-        original_image: DynamicImage,
-    ) -> Result<ndarray::Array3<u8>, Box<dyn std::error::Error>>;
 }
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]

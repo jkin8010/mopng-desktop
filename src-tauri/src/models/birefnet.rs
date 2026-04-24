@@ -1,9 +1,9 @@
-use image::{imageops, DynamicImage, ImageBuffer, ImageEncoder};
-use ndarray::{Array3, Axis};
+use image::{imageops, DynamicImage, ImageBuffer};
+use ndarray::{Array2, Array3, Array4, Axis};
 use once_cell::sync::Lazy;
-use ort::value::Tensor;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tract_onnx::prelude::*;
 
 use super::session::{BaseSession, SessionError};
 
@@ -18,9 +18,9 @@ pub struct BirefnetSession {
 }
 
 impl BirefnetSession {
-    pub fn new(model_path: PathBuf, provider: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(model_path: PathBuf, _provider: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let session_options = super::session::SessionOptions::new()
-            .with_providers(vec![provider.to_string()])
+            .with_providers(vec!["cpu".to_string()])
             .build()?;
 
         let base_session = BaseSession::new(false, session_options, model_path)?;
@@ -53,58 +53,88 @@ impl BirefnetSession {
 pub struct BirefnetSessionGuard;
 
 impl BirefnetSessionGuard {
-    pub fn run(&self, original_image: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
+    pub fn run(&self,
+        original_image: DynamicImage,
+    ) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
         let mut lock = BIREFNET_SESSION.lock().map_err(|_| "Mutex poisoned")?;
         let session = lock.as_mut().ok_or("Session not initialized")?;
 
-        let mask_size = session.input_size;
+        let mask_size = session.input_size as usize;
         let original_width = original_image.width();
         let original_height = original_image.height();
 
         log::info!("原始图片尺寸: {}x{}", original_width, original_height);
 
-        let resized_img = original_image.resize_exact(mask_size, mask_size, imageops::Lanczos3);
-        let image_buffer_array = Array3::<u8>::from_shape_vec(
-            (mask_size as usize, mask_size as usize, 3_usize),
-            resized_img.to_rgb8().to_vec(),
-        ).map_err(|_| SessionError::ImageProcessingError)?;
+        // 1. 调整图片尺寸
+        let resized_img = original_image.resize_exact(
+            mask_size as u32,
+            mask_size as u32,
+            imageops::Lanczos3,
+        );
 
-        let mut input_array = image_buffer_array.mapv(|x| x as f32 / 255.0);
+        // 2. 转换为 RGB 数组并归一化
+        let rgb_img = resized_img.to_rgb8();
+        let mut input_data = Vec::with_capacity(mask_size * mask_size * 3);
 
-        // 归一化
-        for c in 0..3 {
-            input_array.index_axis_mut(Axis(2), c).map_mut(|pixel| {
-                *pixel = (*pixel - session.mean[c]) / session.std[c];
-            });
+        for y in 0..mask_size {
+            for x in 0..mask_size {
+                let pixel = rgb_img.get_pixel(x as u32, y as u32);
+                for c in 0..3 {
+                    let normalized = (pixel[c] as f32 / 255.0 - session.mean[c]) / session.std[c];
+                    input_data.push(normalized);
+                }
+            }
         }
 
-        let input_tensor = input_array.permuted_axes([2, 0, 1]).insert_axis(Axis(0));
+        // 3. 构建输入 Tensor [1, 3, 1024, 1024] (NCHW)
+        let input_array = Array4::from_shape_vec((1, 3, mask_size, mask_size), input_data)?;
+        let input_tensor: Tensor = input_array.into();
 
-        let model = &mut session.base_session.inner_session;
+        // 4. 运行推理
+        let plan = &session.base_session.inner_session;
+        let outputs = plan.run(tvec!(input_tensor.into()))?;
 
-        let ort_input = Tensor::from_array(input_tensor)?;
-        let ort_inputs = ort::inputs![ort_input];
-        let ort_outputs = model.run(ort_inputs)?;
+        // 5. 提取输出 (sigmoid 后已经是 [0,1] 范围)
+        let output = outputs[0].to_array_view::<f32>()?;
+        let output_shape = output.shape();
+        log::info!("输出形状: {:?}", output_shape);
 
-        let output_array_view = ort_outputs[0].try_extract_array::<f32>()?;
-        let output_arr = output_array_view.to_owned();
-        let alpha_mask_raw = output_arr.into_shape((1, 1, mask_size as usize, mask_size as usize))?
-            .remove_axis(Axis(0));
+        // 处理不同输出格式: [1,1,1024,1024] 或 [1,1024,1024]
+        let mask_2d = if output_shape.len() == 4 {
+            // [1, 1, H, W] -> [H, W]
+            Array2::from_shape_fn((mask_size, mask_size), |(h, w)| {
+                output[[0, 0, h, w]]
+            })
+        } else if output_shape.len() == 3 {
+            // [1, H, W] -> [H, W]
+            Array2::from_shape_fn((mask_size, mask_size), |(h, w)| {
+                output[[0, h, w]]
+            })
+        } else {
+            Array2::from_shape_fn((mask_size, mask_size), |(h, w)| {
+                output[[h, w]]
+            })
+        };
 
-        let alpha_mask = alpha_mask_raw.permuted_axes([1, 2, 0]);
-        let alpha_mask = alpha_mask.mapv(|x| (x * 255.0).round() as u8);
-        let (mask_width, mask_height, _) = alpha_mask.dim();
+        // 6. 转换为 u8
+        let alpha_mask = mask_2d.mapv(|x| (x * 255.0).clamp(0.0, 255.0).round() as u8);
 
+        // 7. 调整回原始尺寸
         let alpha_image = DynamicImage::ImageLuma8(
             ImageBuffer::from_vec(
-                mask_width as u32,
-                mask_height as u32,
+                mask_size as u32,
+                mask_size as u32,
                 alpha_mask.into_raw_vec(),
             )
             .unwrap_or_default(),
         );
 
-        let output_image = alpha_image.resize_exact(original_width, original_height, imageops::Lanczos3);
+        let output_image = alpha_image.resize_exact(
+            original_width,
+            original_height,
+            imageops::Lanczos3,
+        );
+
         let output_array = Array3::from_shape_vec(
             (original_height as usize, original_width as usize, 1_usize),
             output_image.to_luma8().into_raw(),
