@@ -30,8 +30,8 @@ once_cell = "1.19"
 dotenvy = "0.15"
 
 [profile.release]
-codegen-units = 1
-lto = true
+codegen-units = 16
+lto = false
 opt-level = 3
 strip = true
 
