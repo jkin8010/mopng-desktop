@@ -13,7 +13,21 @@ import { Progress } from "@/components/ui/progress";
 import { useStore } from "@/store";
 import { AlertCircle, Download, CheckCircle, XCircle, Loader2 } from "lucide-react";
 
-const MODEL_SIZE_MB = 178;
+const MODEL_SIZE_MB = 460;
+
+interface DownloadProgressEvent {
+  bytes_downloaded: number;
+  total_bytes: number;
+  percentage: number;
+  speed_mbps: number;
+  eta_seconds: number;
+}
+
+interface ModelCompleteEvent {
+  exists: boolean;
+  path: string;
+  size_bytes: number;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -21,10 +35,17 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatSpeed(bps: number): string {
-  if (bps < 1024) return `${bps.toFixed(0)} B/s`;
-  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
-  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+function formatSpeed(mbps: number): string {
+  if (mbps < 1.0) return `${(mbps * 1024).toFixed(0)} KB/s`;
+  return `${mbps.toFixed(1)} MB/s`;
+}
+
+function formatETA(seconds: number): string {
+  if (seconds < 60) return `${seconds}秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}小时${m}分`;
 }
 
 export function ModelDialog() {
@@ -36,22 +57,21 @@ export function ModelDialog() {
     let mounted = true;
 
     const setupListener = async () => {
-      const unlisten = await listen<{
-        bytesDownloaded: number;
-        totalBytes: number;
-        bytesPerSecond: number;
-      }>("download-progress", (event) => {
-        if (!mounted) return;
-        const { bytesDownloaded, totalBytes, bytesPerSecond } = event.payload;
-        setModelStatus({
-          ...useStore.getState().modelStatus,
-          bytesDownloaded,
-          totalBytes,
-          progress: totalBytes > 0 ? (bytesDownloaded / totalBytes) * 100 : 0,
-          speed: bytesPerSecond,
-          downloading: true,
-        });
-      });
+      const unlisten = await listen<DownloadProgressEvent>(
+        "model-download-progress",
+        (event) => {
+          if (!mounted) return;
+          const { bytes_downloaded, total_bytes, percentage, speed_mbps } = event.payload;
+          setModelStatus({
+            ...useStore.getState().modelStatus,
+            bytesDownloaded: bytes_downloaded,
+            totalBytes: total_bytes,
+            progress: percentage,
+            speed: speed_mbps,
+            downloading: true,
+          });
+        }
+      );
 
       unlistenRef.current = unlisten;
     };
@@ -170,15 +190,46 @@ export function ModelDialog() {
           )}
 
           {modelStatus.downloading && (
-            <div className="space-y-2">
-              <Progress value={modelStatus.progress} className="h-2" />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>{formatBytes(modelStatus.bytesDownloaded)} / {formatBytes(modelStatus.totalBytes)}</span>
-                <span>{modelStatus.progress.toFixed(1)}%</span>
+            <div className="space-y-3 py-2">
+              {/* 进度条 */}
+              <Progress value={modelStatus.progress} className="h-2.5" />
+
+              {/* 主要数据行 */}
+              <div className="flex justify-between items-center text-sm">
+                <span className="font-medium text-foreground">
+                  {modelStatus.progress.toFixed(1)}%
+                </span>
+                <span className="text-muted-foreground">
+                  {formatBytes(modelStatus.bytesDownloaded)} / {formatBytes(modelStatus.totalBytes)}
+                </span>
               </div>
+
+              {/* 速度和 ETA */}
               {modelStatus.speed > 0 && (
-                <div className="text-xs text-muted-foreground">
-                  速度: {formatSpeed(modelStatus.speed)}
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {formatSpeed(modelStatus.speed)}
+                  </span>
+                  {modelStatus.totalBytes > 0 && (
+                    <span>
+                      剩余时间: {formatETA(
+                        Math.max(
+                          0,
+                          Math.floor(
+                            (modelStatus.totalBytes - modelStatus.bytesDownloaded) / (modelStatus.speed * 1024 * 1024)
+                          )
+                        )
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* 断点续传提示 */}
+              {modelStatus.bytesDownloaded > 0 && modelStatus.progress < 100 && (
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1">
+                  支持断点续传，关闭应用后再次下载将从上次进度继续
                 </div>
               )}
             </div>

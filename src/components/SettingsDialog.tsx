@@ -43,34 +43,37 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     let unlistenComplete: UnlistenFn | undefined;
 
     const setupListeners = async () => {
-      unlistenProgress = await listen<DownloadProgressEvent>(
-        "model-download-progress",
-        (e) => {
-          const { bytes_downloaded, total_bytes, percentage, speed_mbps } =
-            e.payload;
-          setModelStatus({
-            downloading: true,
-            progress: percentage,
-            bytesDownloaded: bytes_downloaded,
-            totalBytes: total_bytes,
-            speed: speed_mbps,
-          });
-        }
-      );
+      unlistenProgress = await listen<{
+        bytes_downloaded: number;
+        total_bytes: number;
+        percentage: number;
+        speed_mbps: number;
+        eta_seconds: number;
+      }>("model-download-progress", (e) => {
+        const { bytes_downloaded, total_bytes, percentage, speed_mbps } = e.payload;
+        setModelStatus({
+          downloading: true,
+          progress: percentage,
+          bytesDownloaded: bytes_downloaded,
+          totalBytes: total_bytes,
+          speed: speed_mbps,
+        });
+      });
 
-      unlistenComplete = await listen<ModelInfoEvent>(
-        "model-download-complete",
-        (e) => {
-          const { exists, path, size_bytes } = e.payload;
-          setModelStatus({
-            exists,
-            path,
-            size: size_bytes,
-            downloading: false,
-            progress: 100,
-          });
-        }
-      );
+      unlistenComplete = await listen<{
+        exists: boolean;
+        path: string;
+        size_bytes: number;
+      }>("model-download-complete", (e) => {
+        const { exists, path, size_bytes } = e.payload;
+        setModelStatus({
+          exists,
+          path,
+          size: size_bytes,
+          downloading: false,
+          progress: 100,
+        });
+      });
     };
 
     setupListeners();
@@ -353,21 +356,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       </DialogContent>
     </Dialog>
   );
-}
-
-// 后端事件类型
-interface DownloadProgressEvent {
-  bytes_downloaded: number;
-  total_bytes: number;
-  percentage: number;
-  speed_mbps: number;
-  eta_seconds: number;
-}
-
-interface ModelInfoEvent {
-  exists: boolean;
-  path: string;
-  size_bytes: number;
 }
 
 function formatFileSize(bytes: number): string {
