@@ -24,10 +24,16 @@ function App() {
   useEffect(() => {
     const checkModel = async () => {
       try {
-        const exists = await invoke<boolean>("check_model", {});
-        if (exists) {
-          const path = await invoke<string>("get_model_path", {});
-          setModelStatus({ exists: true, path, downloading: false, progress: 100 });
+        const info = await invoke<ModelInfo>("check_model", {});
+        if (info.exists) {
+          setModelStatus({ exists: true, path: info.path, downloading: false, progress: 100 });
+
+          // 自动将模型加载到内存
+          try {
+            await invoke("init_model", { modelPath: info.path, provider: "coreml" });
+          } catch (initErr) {
+            console.warn("模型加载到内存失败:", initErr);
+          }
         } else {
           setModelStatus({ exists: false, downloading: false });
           setModelDialogOpen(true);

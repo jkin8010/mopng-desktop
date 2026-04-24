@@ -98,7 +98,7 @@ export function PreviewCanvas({ task, toAssetUrl }: PreviewCanvasProps) {
           transformOrigin: "center",
         }}
       >
-        {task.status === "processing" && !task.result ? (
+        {task.status === "processing" ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="w-12 h-12 animate-spin text-primary" />
             <p className="text-sm text-muted-foreground">AI 抠图中...</p>

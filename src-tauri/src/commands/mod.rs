@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use image::{io::Reader as ImageReader, ImageFormat};
+use image::{ImageReader, ImageFormat};
 use image::GenericImageView;
 use tauri::{command, Manager};
 use tauri_plugin_dialog::FilePath;
@@ -222,18 +222,26 @@ pub fn export_image_dialog(
 fn run_birefnet_inference(
     img: &image::DynamicImage,
 ) -> Result<ndarray::Array2<f32>, String> {
-    // This is a placeholder implementation
-    // In the real implementation, you would:
-    // 1. Load the ONNX model using ort
-    // 2. Preprocess the image to 1024x1024
-    // 3. Run inference
-    // 4. Postprocess the output to get the alpha mask
-    // 5. Resize the mask back to original dimensions
+    println!(
+        "[Inference] Starting BiRefNet inference for {}x{} image",
+        img.width(),
+        img.height()
+    );
 
-    // For now, return a dummy mask (all ones)
-    let (width, height) = (img.width() as usize, img.height() as usize);
-    let mask = ndarray::Array2::ones((height, width));
+    let guard = crate::models::birefnet::BirefnetSession::get()
+        .ok_or("模型未初始化，请先加载模型")?;
 
+    let output = guard
+        .run(img.clone())
+        .map_err(|e| format!("推理失败: {}", e))?;
+
+    // output: Array3<u8> with shape (height, width, 1)
+    let (h, w, _) = output.dim();
+    let mask = output
+        .remove_axis(ndarray::Axis(2))
+        .mapv(|v| v as f32 / 255.0);
+
+    println!("[Inference] Inference complete, mask shape: {}x{}", h, w);
     Ok(mask)
 }
 

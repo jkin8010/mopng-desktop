@@ -93,9 +93,10 @@ export function useTauri() {
       try {
         // 1. 抠图处理
         const resultPath: string = await invoke('process_image', {
-          imagePath: task.filePath,
-          settings: task.settings,
-          modelPath: appSettings.modelPath || '',
+          params: {
+            filePath: task.filePath,
+            settings: task.settings,
+          },
         });
 
         updateTask(task.id, { status: 'processing', progress: 80 });

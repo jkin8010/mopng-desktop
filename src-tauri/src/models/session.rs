@@ -1,8 +1,7 @@
 use image::DynamicImage;
-use ort::{
-    CPUExecutionProvider, CUDAExecutionProvider, CoreMLExecutionProvider,
-    DirectMLExecutionProvider, ExecutionProviderDispatch, GraphOptimizationLevel, Session,
-};
+use ort::ep::{CoreML, CUDA, DirectML, CPU, ExecutionProviderDispatch};
+use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -84,7 +83,7 @@ impl BaseSession {
         }
 
         session_builder = session_builder.with_intra_threads(
-            if session_options.num_threads <= 0 { 1 } else { session_options.num_threads }
+            if session_options.num_threads == 0 { 1 } else { session_options.num_threads }
         )?;
 
         let providers = session_options
@@ -92,10 +91,10 @@ impl BaseSession {
             .unwrap_or(vec!["cpu".to_owned()])
             .iter()
             .map(|provider| match provider.as_str() {
-                "coreml" => CoreMLExecutionProvider::default().build(),
-                "cuda" => CUDAExecutionProvider::default().build(),
-                "directml" => DirectMLExecutionProvider::default().build(),
-                _ => CPUExecutionProvider::default().build(),
+                "coreml" => CoreML::default().build(),
+                "cuda" => CUDA::default().build(),
+                "directml" => DirectML::default().build(),
+                _ => CPU::default().build(),
             })
             .collect::<Vec<ExecutionProviderDispatch>>();
 
@@ -110,13 +109,13 @@ impl BaseSession {
         })
     }
 
-    pub fn get_session(&self) -> Option<&Session> {
-        Some(&self.inner_session)
+    pub fn get_session(&mut self) -> Option<&mut Session> {
+        Some(&mut self.inner_session)
     }
 }
 
 pub trait BaseSessionTrait {
-    fn get_session(&self) -> Option<&Session>;
+    fn get_session(&mut self) -> Option<&mut Session>;
 
     fn run(
         &self,

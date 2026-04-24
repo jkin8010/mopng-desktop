@@ -1,9 +1,9 @@
-use image::{imageops, DynamicImage, ImageBuffer, Rgba};
+use image::{imageops, DynamicImage, ImageBuffer, ImageEncoder};
 use ndarray::{Array3, Axis};
-use ort::inputs;
+use once_cell::sync::Lazy;
+use ort::value::Tensor;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
 
 use super::session::{BaseSession, SessionError};
 
@@ -54,8 +54,8 @@ pub struct BirefnetSessionGuard;
 
 impl BirefnetSessionGuard {
     pub fn run(&self, original_image: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
-        let lock = BIREFNET_SESSION.lock().map_err(|_| "Mutex poisoned")?;
-        let session = lock.as_ref().ok_or("Session not initialized")?;
+        let mut lock = BIREFNET_SESSION.lock().map_err(|_| "Mutex poisoned")?;
+        let session = lock.as_mut().ok_or("Session not initialized")?;
 
         let mask_size = session.input_size;
         let original_width = original_image.width();
@@ -80,16 +80,15 @@ impl BirefnetSessionGuard {
 
         let input_tensor = input_array.permuted_axes([2, 0, 1]).insert_axis(Axis(0));
 
-        let model = session.base_session.get_session()
-            .ok_or(SessionError::ModelLoadError)?;
+        let model = &mut session.base_session.inner_session;
 
-        let ort_inputs = inputs![input_tensor]?;
+        let ort_input = Tensor::from_array(input_tensor)?;
+        let ort_inputs = ort::inputs![ort_input];
         let ort_outputs = model.run(ort_inputs)?;
 
-        let output_tensor = ort_outputs[0].try_extract_tensor::<f32>()?;
-
-        let alpha_mask_raw = output_tensor
-            .to_shape((1, 1, mask_size as usize, mask_size as usize))?
+        let output_array_view = ort_outputs[0].try_extract_array::<f32>()?;
+        let output_arr = output_array_view.to_owned();
+        let alpha_mask_raw = output_arr.into_shape((1, 1, mask_size as usize, mask_size as usize))?
             .remove_axis(Axis(0));
 
         let alpha_mask = alpha_mask_raw.permuted_axes([1, 2, 0]);

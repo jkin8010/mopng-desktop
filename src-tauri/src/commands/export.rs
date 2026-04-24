@@ -63,7 +63,7 @@ pub fn export_image(
         "jpg" | "jpeg" => {
             let path = output_dir.join(format!("{}_matte.jpg", stem));
             // 读取 PNG 并转换为 JPG（白色背景）
-            let img = image::io::Reader::open(&input_path)
+            let img = image::ImageReader::open(&input_path)
                 .map_err(|e| e.to_string())?
                 .decode()
                 .map_err(|e| e.to_string())?;
@@ -74,7 +74,13 @@ pub fn export_image(
                 &mut output_file,
                 settings.quality,
             );
-            encoder.encode(&rgb_img, rgb_img.width(), rgb_img.height(), image::ColorType::Rgb8)
+            encoder
+                .encode(
+                    &rgb_img,
+                    rgb_img.width(),
+                    rgb_img.height(),
+                    image::ExtendedColorType::Rgb8,
+                )
                 .map_err(|e| e.to_string())?;
 
             path
@@ -105,7 +111,7 @@ pub fn preview_composite(
     bg_settings: BgSettings,
     watermark_settings: WatermarkSettings,
 ) -> Result<String, String> {
-    let result = image::io::Reader::open(&result_path)
+    let result = image::ImageReader::open(&result_path)
         .map_err(|e| e.to_string())?
         .decode()
         .map_err(|e| e.to_string())?;
@@ -125,8 +131,9 @@ pub fn preview_composite(
         }
         "image" => {
             if let Some(bg_path) = bg_settings.image_path {
-                if let Ok(bg) = image::io::Reader::open(&bg_path)
-                    .and_then(|r| Ok(r.decode().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?)) {
+                if let Ok(bg) = image::ImageReader::open(&bg_path)
+                    .and_then(|r| Ok(r.decode().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?))
+                {
                     bg.resize_exact(width, height, image::imageops::Lanczos3).to_rgba8()
                 } else {
                     image::RgbaImage::new(width, height)
@@ -160,12 +167,14 @@ pub fn preview_composite(
     {
         let cursor = std::io::Cursor::new(&mut png_bytes);
         let encoder = image::codecs::png::PngEncoder::new(cursor);
-        encoder.write_image(
-            &composite.into_raw(),
-            width,
-            height,
-            image::ColorType::Rgba8,
-        ).map_err(|e| e.to_string())?;
+        encoder
+            .write_image(
+                &composite.into_raw(),
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(BASE64_STANDARD.encode(&png_bytes))

@@ -1,7 +1,8 @@
-use serde::{Deserialize, Serialize};
+pub mod birefnet;
+pub mod session;
 
-// pub mod birefnet;  // 取消注释以启用 BiRefNet ONNX 推理
-// pub mod session;   // 取消注释以启用 BiRefNet ONNX 推理
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,4 +39,27 @@ pub struct ProcessResult {
 pub struct ThumbnailParams {
     pub path: String,
     pub max_size: u32,
+}
+
+/// 初始化模型（由前端在确认模型存在后调用）
+#[tauri::command]
+pub fn init_model(model_path: String, provider: Option<String>) -> Result<(), String> {
+    let path = PathBuf::from(model_path);
+    if !path.exists() {
+        return Err(format!("模型文件不存在: {:?}", path));
+    }
+
+    let provider = provider.unwrap_or_else(|| "coreml".to_string());
+
+    birefnet::BirefnetSession::init(path, &provider)
+        .map_err(|e| format!("模型初始化失败: {}", e))?;
+
+    log::info!("BiRefNet 模型初始化成功，Provider: {}", provider);
+    Ok(())
+}
+
+/// 检查模型是否已加载到内存
+#[tauri::command]
+pub fn is_model_loaded() -> bool {
+    birefnet::BirefnetSession::get().is_some()
 }
