@@ -100,13 +100,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Cache Rust dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          key: ${{ matrix.name }}
-
-      # Build and upload to the draft release
+      # 注意：不使用 rust-cache，避免与 tauri-action 冲突
+      # tauri-action 会自动处理 Rust 依赖缓存
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
