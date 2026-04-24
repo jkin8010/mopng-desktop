@@ -5,9 +5,10 @@ import { cn } from "@/lib/utils";
 
 interface PreviewCanvasProps {
   task: MattingTask | null;
+  toAssetUrl: (path: string) => string;
 }
 
-export function PreviewCanvas({ task }: PreviewCanvasProps) {
+export function PreviewCanvas({ task, toAssetUrl }: PreviewCanvasProps) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -59,9 +60,10 @@ export function PreviewCanvas({ task }: PreviewCanvasProps) {
     );
   }
 
+  // 使用 toAssetUrl 转换路径，确保 Tauri v2 中本地文件能正确显示
   const imageSrc = showOriginal
-    ? task.filePath
-    : task.result?.previewPath || task.result?.outputPath || task.filePath;
+    ? toAssetUrl(task.filePath)
+    : toAssetUrl(task.result?.previewPath || task.result?.outputPath || task.filePath);
 
   return (
     <div

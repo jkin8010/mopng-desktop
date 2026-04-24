@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { useStore } from "@/store";
 import { TitleBar } from "@/components/TitleBar";
 import { DropZone } from "@/components/DropZone";
@@ -12,12 +12,24 @@ import type { MattingTask } from "@/types";
 import { generateId } from "@/lib/id";
 
 function App() {
-  const { tasks, selectedTaskId, addTasks, selectTask, dragOver, setDragOver } =
+  const { tasks, selectedTaskId, addTasks, selectTask, updateTask, dragOver, setDragOver } =
     useStore();
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
-  // Handle file drop from OS
+  // 将本地文件路径转换为 Tauri asset URL
+  const toAssetUrl = useCallback((path: string): string => {
+    if (!path) return "";
+    if (path.startsWith("data:")) return path;
+    if (path.startsWith("http")) return path;
+    try {
+      return convertFileSrc(path);
+    } catch {
+      return path;
+    }
+  }, []);
+
+  // Handle file drop from OS (tauri://drag-drop)
   useEffect(() => {
     const unlisten = listen<{ paths: string[] }>("tauri://drag-drop", (event) => {
       const paths = event.payload.paths;
@@ -46,20 +58,31 @@ function App() {
 
       addTasks(newTasks);
 
-      // Generate thumbnails
+      // 立即为每个任务生成预览图（使用 convertFileSrc 转换路径）
+      for (const task of newTasks) {
+        try {
+          const assetUrl = toAssetUrl(task.filePath);
+          updateTask(task.id, { thumbnail: assetUrl });
+        } catch {
+          // ignore
+        }
+      }
+
+      // 后台生成高质量缩略图
       for (const task of newTasks) {
         try {
           const thumbnail = await invoke<string>("generate_thumbnail", {
             path: task.filePath,
             maxSize: 120,
           });
-          useStore.getState().updateTask(task.id, { thumbnail });
-        } catch {
-          // thumbnail generation failed, ignore
+          updateTask(task.id, { thumbnail });
+        } catch (err) {
+          console.warn("缩略图生成失败:", task.filePath, err);
+          // 保留 asset URL 作为回退
         }
       }
     },
-    [addTasks]
+    [addTasks, updateTask, toAssetUrl]
   );
 
   const handleDrop = useCallback(
@@ -111,7 +134,7 @@ function App() {
         <div className="flex-1 flex flex-col relative">
           {dragOver && <DropZone />}
 
-          <PreviewCanvas task={selectedTask} />
+          <PreviewCanvas task={selectedTask} toAssetUrl={toAssetUrl} />
 
           {/* Bottom task bar */}
           <TaskBar task={selectedTask} />
