@@ -1,7 +1,6 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
-use tauri_plugin_fs::FsExt;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::FilePath;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileInfo {
@@ -10,29 +9,32 @@ pub struct FileInfo {
     pub size: u64,
 }
 
-/// 获取应用数据目录
+/// 读取图像文件
 #[tauri::command]
-pub fn get_app_dir(app: AppHandle) -> Result<String, String> {
-    let path = app.path_resolver().app_data_dir()
-        .map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+pub fn read_image_file(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))
 }
 
-/// 获取模型目录
+/// 选择多个图片文件
 #[tauri::command]
-pub fn get_model_dir(app: AppHandle) -> Result<String, String> {
-    let path = app.path_resolver().app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("models");
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
-}
+pub async fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
 
-/// 检查模型文件是否存在
-#[tauri::command]
-pub fn check_model_file(app: AppHandle) -> Result<bool, String> {
-    let model_dir = get_model_dir(app)?;
-    let model_path = PathBuf::from(model_dir).join("birefnet.onnx");
-    Ok(model_path.exists())
+    let file_paths = app
+        .dialog()
+        .file()
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp", "bmp", "gif"])
+        .blocking_pick_files()
+        .unwrap_or_default();
+
+    let paths: Vec<String> = file_paths
+        .into_iter()
+        .filter_map(|f| match f {
+            FilePath::Path(p) => Some(p.to_string_lossy().to_string()),
+            FilePath::Url(u) => Some(u.to_string()),
+            _ => None,
+        })
+        .collect();
+
+    Ok(paths)
 }

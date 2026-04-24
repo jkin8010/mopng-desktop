@@ -44,6 +44,18 @@ export interface AppSettings {
   modelPath?: string;
 }
 
+export interface ModelStatus {
+  exists: boolean;
+  path: string;
+  size: number;
+  downloading: boolean;
+  progress: number;
+  bytesDownloaded: number;
+  totalBytes: number;
+  speed: number;
+  error?: string;
+}
+
 export const DEFAULT_SETTINGS: MattingSettings = {
   mode: "foreground",
   outputFormat: "png",

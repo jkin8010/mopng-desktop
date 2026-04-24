@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use base64::prelude::*;
+use image::ImageEncoder;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExportSettings {
@@ -52,7 +53,8 @@ pub fn export_image(
     std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
 
     // 确定输出文件名
-    let stem = PathBuf::from(&settings.file_name)
+    let stem_buf = PathBuf::from(&settings.file_name);
+    let stem = stem_buf
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("result");
@@ -68,11 +70,11 @@ pub fn export_image(
 
             let rgb_img = img.to_rgb8();
             let mut output_file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
                 &mut output_file,
                 settings.quality,
             );
-            encoder.encode(&rgb_img, rgb_img.width(), rgb_img.height(), image::ExtendedColorType::Rgb8)
+            encoder.encode(&rgb_img, rgb_img.width(), rgb_img.height(), image::ColorType::Rgb8)
                 .map_err(|e| e.to_string())?;
 
             path
@@ -124,7 +126,7 @@ pub fn preview_composite(
         "image" => {
             if let Some(bg_path) = bg_settings.image_path {
                 if let Ok(bg) = image::io::Reader::open(&bg_path)
-                    .and_then(|r| r.decode()) {
+                    .and_then(|r| Ok(r.decode().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?)) {
                     bg.resize_exact(width, height, image::imageops::Lanczos3).to_rgba8()
                 } else {
                     image::RgbaImage::new(width, height)
@@ -162,7 +164,7 @@ pub fn preview_composite(
             &composite.into_raw(),
             width,
             height,
-            image::ExtendedColorType::Rgba8,
+            image::ColorType::Rgba8,
         ).map_err(|e| e.to_string())?;
     }
 

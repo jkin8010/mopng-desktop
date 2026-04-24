@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { MattingTask, MattingSettings, AppSettings } from "@/types";
+import type { MattingTask, MattingSettings, AppSettings, ModelStatus } from "@/types";
 import { DEFAULT_APP_SETTINGS } from "@/types";
 
 interface AppState {
@@ -11,6 +11,8 @@ interface AppState {
   isProcessing: boolean;
   globalProgress: number;
   dragOver: boolean;
+  modelStatus: ModelStatus;
+  modelDialogOpen: boolean;
 
   // Actions
   addTasks: (tasks: MattingTask[]) => void;
@@ -24,6 +26,8 @@ interface AppState {
   setDragOver: (over: boolean) => void;
   clearCompleted: () => void;
   clearAll: () => void;
+  setModelStatus: (status: Partial<ModelStatus>) => void;
+  setModelDialogOpen: (open: boolean) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -36,6 +40,17 @@ export const useStore = create<AppState>()(
       isProcessing: false,
       globalProgress: 0,
       dragOver: false,
+      modelStatus: {
+        exists: false,
+        path: "",
+        size: 0,
+        downloading: false,
+        progress: 0,
+        bytesDownloaded: 0,
+        totalBytes: 0,
+        speed: 0,
+      },
+      modelDialogOpen: false,
 
       addTasks: (newTasks) =>
         set((state) => {
@@ -100,6 +115,13 @@ export const useStore = create<AppState>()(
         }),
 
       clearAll: () => set({ tasks: [], selectedTaskId: null }),
+
+      setModelStatus: (status) =>
+        set((state) => ({
+          modelStatus: { ...state.modelStatus, ...status },
+        })),
+
+      setModelDialogOpen: (open) => set({ modelDialogOpen: open }),
     }),
     {
       name: "mopng-desktop-store",

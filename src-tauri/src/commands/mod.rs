@@ -5,8 +5,14 @@ use image::{io::Reader as ImageReader, ImageFormat};
 use image::GenericImageView;
 use tauri::{command, Manager};
 use tauri_plugin_dialog::FilePath;
+pub use self::download::*;
+pub use self::file::*;
 
 use crate::models::{MattingSettings, ProcessParams, ProcessResult, ThumbnailParams};
+
+pub mod download;
+pub mod export;
+pub mod file;
 
 /// Process an image using BiRefNet ONNX model
 #[command]
@@ -176,9 +182,9 @@ pub fn open_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Export image to a user-selected location
+/// Export image to a user-selected location (dialog-based)
 #[command]
-pub fn export_image(
+pub fn export_image_dialog(
     source_path: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -209,24 +215,6 @@ pub fn export_image(
         }
         None => Err("No path selected".to_string()),
     }
-}
-
-/// Get the model file path
-#[command]
-pub fn get_model_path(app: tauri::AppHandle) -> Result<String, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    let model_path = resource_dir.join("models/birefnet.onnx");
-    Ok(model_path.to_string_lossy().to_string())
-}
-
-/// Set the output directory
-#[command]
-pub fn set_output_dir(_path: String) -> Result<(), String> {
-    // This is just a placeholder - in a real app you'd store this in settings
-    Ok(())
 }
 
 // Internal helper functions

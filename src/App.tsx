@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { useStore } from "@/store";
@@ -8,14 +8,39 @@ import { ThumbnailList } from "@/components/ThumbnailList";
 import { PreviewCanvas } from "@/components/PreviewCanvas";
 import { ControlPanel } from "@/components/ControlPanel";
 import { TaskBar } from "@/components/TaskBar";
+import { ModelDialog } from "@/components/ModelDialog";
 import type { MattingTask } from "@/types";
 import { generateId } from "@/lib/id";
 
 function App() {
   const { tasks, selectedTaskId, addTasks, selectTask, updateTask, dragOver, setDragOver } =
     useStore();
+  const { modelStatus, setModelStatus, setModelDialogOpen } = useStore();
+  const [initialized, setInitialized] = useState(false);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
+
+  // 启动时检查模型
+  useEffect(() => {
+    const checkModel = async () => {
+      try {
+        const exists = await invoke<boolean>("check_model", {});
+        if (exists) {
+          const path = await invoke<string>("get_model_path", {});
+          setModelStatus({ exists: true, path, downloading: false, progress: 100 });
+        } else {
+          setModelStatus({ exists: false, downloading: false });
+          setModelDialogOpen(true);
+        }
+      } catch (err) {
+        console.warn("模型检查失败:", err);
+        setModelDialogOpen(true);
+      } finally {
+        setInitialized(true);
+      }
+    };
+    checkModel();
+  }, []);
 
   // 将本地文件路径转换为 Tauri asset URL
   const toAssetUrl = useCallback((path: string): string => {
@@ -143,6 +168,9 @@ function App() {
         {/* Right sidebar - controls */}
         <ControlPanel />
       </main>
+
+      {/* Model download dialog */}
+      {initialized && <ModelDialog />}
     </div>
   );
 }
