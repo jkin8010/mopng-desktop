@@ -20,17 +20,15 @@ fn model_filename() -> String {
     std::env::var("MODEL_FILENAME").unwrap_or_else(|_| DEFAULT_MODEL_FILENAME.to_string())
 }
 
-/// 构建完整下载链接（如 .env 中 URL 是目录，则拼接文件名）
+/// 构建完整下载链接
 fn model_download_url() -> String {
     let url = model_url();
     let filename = model_filename();
     if url.ends_with('/') {
         format!("{}{}", url, filename)
     } else if url.contains("huggingface") || url.contains("model.onnx") {
-        // HuggingFace 等完整 URL，直接使用
         url
     } else {
-        // 其他情况，拼接文件名
         format!("{}/{}", url, filename)
     }
 }
@@ -51,10 +49,8 @@ pub struct ModelInfo {
     pub size_bytes: u64,
 }
 
-/// 获取模型下载地址（用于前端显示，实际下载由后端自动处理）
 #[tauri::command]
 pub fn get_model_download_url() -> String {
-    // 不直接暴露完整 URL，仅返回来源标识
     let url = model_url();
     if url.contains("mocdn.mopng.cn") {
         "MoCDN".to_string()
@@ -65,14 +61,12 @@ pub fn get_model_download_url() -> String {
     }
 }
 
-/// 获取模型本地路径
 #[tauri::command]
 pub fn get_model_path(app: AppHandle) -> Result<String, String> {
     let path = model_file_path(&app)?;
     Ok(path.to_string_lossy().to_string())
 }
 
-/// 检查模型是否存在
 #[tauri::command]
 pub fn check_model(app: AppHandle) -> Result<ModelInfo, String> {
     let path = model_file_path(&app)?;
@@ -90,23 +84,25 @@ pub fn check_model(app: AppHandle) -> Result<ModelInfo, String> {
     })
 }
 
-/// 下载模型（支持断点续传）
+/// 下载模型（同步命令，内部使用 async_runtime）
 #[tauri::command]
-pub async fn download_model(app: AppHandle) -> Result<String, String> {
+pub fn download_model(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::block_on(async { download_model_inner(app).await })
+}
+
+async fn download_model_inner(app: AppHandle) -> Result<String, String> {
     let url = model_download_url();
     let model_path = model_file_path(&app)?;
     let temp_path = model_path.with_extension("tmp");
 
     let client = reqwest::Client::new();
 
-    // 获取已下载大小（断点续传）
     let downloaded = if temp_path.exists() {
         fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };
 
-    // 获取文件总大小
     let total_size = match client.head(&url).send().await {
         Ok(resp) => resp
             .headers()
@@ -127,7 +123,6 @@ pub async fn download_model(app: AppHandle) -> Result<String, String> {
         return Ok(model_path.to_string_lossy().to_string());
     }
 
-    // 发送下载请求（支持 Range）
     let mut request = client.get(&url);
     if downloaded > 0 {
         request = request.header("Range", format!("bytes={}-", downloaded));
@@ -169,7 +164,6 @@ pub async fn download_model(app: AppHandle) -> Result<String, String> {
         let last = last_emit.load(Ordering::SeqCst);
         let elapsed = start_time.elapsed().as_secs_f64();
 
-        // 每 512KB 或 200ms 推送一次进度
         if new_downloaded.saturating_sub(last) >= 524_288 || elapsed >= 0.2 {
             last_emit.store(new_downloaded, Ordering::SeqCst);
 
@@ -214,7 +208,6 @@ pub async fn download_model(app: AppHandle) -> Result<String, String> {
     Ok(model_path.to_string_lossy().to_string())
 }
 
-/// 取消下载
 #[tauri::command]
 pub fn cancel_download(app: AppHandle) -> Result<(), String> {
     let model_path = model_file_path(&app)?;
@@ -225,7 +218,6 @@ pub fn cancel_download(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 获取模型目录
 #[tauri::command]
 pub fn get_model_dir(app: AppHandle) -> Result<String, String> {
     let dir = model_dir(&app)?;
