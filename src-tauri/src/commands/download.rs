@@ -7,15 +7,24 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-const DEFAULT_MODEL_URL: &str = "https://huggingface.co/ZhengPeng7/BiRefNet/resolve/main/model.onnx";
-const DEFAULT_MODEL_FILENAME: &str = "birefnet.onnx";
+/// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
+const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
+    Some(url) => url,
+    None => "https://mocdn.mopng.cn/models/",
+};
 
-/// 从 .env 或环境变量读取模型 URL
+/// 编译时可覆盖的默认模型文件名
+const DEFAULT_MODEL_FILENAME: &str = match option_env!("MODEL_FILENAME") {
+    Some(name) => name,
+    None => "birefnet_fp16.onnx",
+};
+
+/// 运行时环境变量可覆盖模型 URL（用户级自定义）
 fn model_url() -> String {
     std::env::var("MODEL_URL").unwrap_or_else(|_| DEFAULT_MODEL_URL.to_string())
 }
 
-/// 从 .env 或环境变量读取模型文件名
+/// 运行时环境变量可覆盖模型文件名（用户级自定义）
 fn model_filename() -> String {
     std::env::var("MODEL_FILENAME").unwrap_or_else(|_| DEFAULT_MODEL_FILENAME.to_string())
 }

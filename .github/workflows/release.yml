@@ -30,7 +30,7 @@ jobs:
               repo: context.repo.repo,
               tag_name: context.ref.replace('refs/tags/', ''),
               name: `MoPNG Desktop ${context.ref.replace('refs/tags/v', '')}`,
-              body: '⏳ 构建中，请稍候...\n\n**下载说明：**\n- 🍎 macOS Apple Silicon (M1/M2/M3): `*-aarch64.dmg`\n- 🖥️ macOS Intel: `*-x86_64.dmg`\n- 🪟 Windows: `*-setup.exe`\n- 🐧 Linux: `*.AppImage` 或 `*.deb`',
+              body: '⏳ 构建中，请稍候...\n\n**配置信息：**\n- 模型服务器：`${{ secrets.MODEL_URL || 'https://mocdn.mopng.cn/models/' }}`\n- 模型文件：`${{ secrets.MODEL_FILENAME || 'birefnet_fp16.onnx' }}`\n\n**下载说明：**\n- 🍎 macOS Apple Silicon (M1/M2/M3): `*-aarch64.dmg`\n- 🖥️ macOS Intel: `*-x86_64.dmg`\n- 🪟 Windows: `*-setup.exe`\n- 🐧 Linux: `*.AppImage` 或 `*.deb`',
               draft: true,
               prerelease: false,
               generate_release_notes: false,
@@ -111,6 +111,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 编译时注入模型配置（GitHub Secrets 可覆盖默认值）
+          MODEL_URL: ${{ secrets.MODEL_URL || 'https://mocdn.mopng.cn/models/' }}
+          MODEL_FILENAME: ${{ secrets.MODEL_FILENAME || 'birefnet_fp16.onnx' }}
         with:
           args: ${{ matrix.args }}
           releaseId: ${{ needs.create-release.outputs.release_id }}
