@@ -2,7 +2,7 @@
 
 基于 **Tauri + React + BiRefNet** 的本地 AI 抠图客户端，所有图片处理均在本地完成，无需上传云端，保护您的隐私与数据安全。
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/jkin8010/mopng-desktop)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/jkin8010/mopng-desktop)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-24C8D8?logo=tauri)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
@@ -208,8 +208,8 @@ mopng-desktop/
 | 版本 | 功能 | 时间 |
 |:----:|------|:----:|
 | v0.1.0 | 基础抠图、批量处理、导出 | ✅ 当前 |
-| v0.2.0 | 模型自动下载、配置持久化 | 🔜 |
-| v0.3.0 | 批量背景替换、尺寸模板 | 📋 |
+| v0.2.0 | 模型自动下载、配置持久化 | ✅ 当前 |
+| v0.3.0 | 批量背景替换、尺寸模板 | 🔜 |
 | v0.4.0 | 插件系统、自定义模型 | 📋 |
 | v1.0.0 | 稳定版、多语言、自动更新 | 📋 |
 
