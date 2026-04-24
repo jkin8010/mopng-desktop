@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Play, FolderOpen, Download, Settings } from "lucide-react";
+import { Play, FolderOpen, Download, Settings, Wrench } from "lucide-react";
 import { useStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -14,7 +14,11 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { MattingMode, OutputFormat, BgType } from "@/types";
 
-export function ControlPanel() {
+interface ControlPanelProps {
+  onOpenSettings: () => void;
+}
+
+export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
   const {
     tasks,
     selectedTaskId,
@@ -127,11 +131,14 @@ export function ControlPanel() {
   return (
     <TooltipProvider>
       <div className="w-72 flex flex-col border-l border-border bg-card overflow-y-auto">
-        <div className="p-4 border-b border-border">
+        <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="text-sm font-semibold flex items-center gap-2">
-            <Settings className="w-4 h-4" />
-            设置
+            <Wrench className="w-4 h-4" />
+            处理设置
           </h2>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} title="偏好设置">
+            <Settings className="w-4 h-4" />
+          </Button>
         </div>
 
         <div className="p-4 space-y-5">

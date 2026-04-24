@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_dialog::FilePath;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,5 +38,20 @@ pub fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {
             .collect();
 
         Ok(paths)
+    })
+}
+
+/// 选择输出目录
+#[tauri::command]
+pub fn select_output_dir(app: AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::block_on(async {
+        use tauri_plugin_dialog::DialogExt;
+
+        let result = app.dialog().file().blocking_pick_folder();
+        match result {
+            Some(FilePath::Path(p)) => Ok(Some(p.to_string_lossy().to_string())),
+            Some(FilePath::Url(u)) => Ok(Some(u.to_string())),
+            _ => Ok(None),
+        }
     })
 }

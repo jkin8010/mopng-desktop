@@ -9,6 +9,8 @@ import { PreviewCanvas } from "@/components/PreviewCanvas";
 import { ControlPanel } from "@/components/ControlPanel";
 import { TaskBar } from "@/components/TaskBar";
 import { ModelDialog } from "@/components/ModelDialog";
+import { SettingsDialog } from "@/components/SettingsDialog";
+import { BatchProgress } from "@/components/BatchProgress";
 import type { MattingTask } from "@/types";
 import { generateId } from "@/lib/id";
 
@@ -17,6 +19,7 @@ function App() {
     useStore();
   const { modelStatus, setModelStatus, setModelDialogOpen } = useStore();
   const [initialized, setInitialized] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
@@ -24,9 +27,9 @@ function App() {
   useEffect(() => {
     const checkModel = async () => {
       try {
-        const info = await invoke<ModelInfo>("check_model", {});
+        const info: { exists: boolean; path: string; size_bytes: number } = await invoke("check_model", {});
         if (info.exists) {
-          setModelStatus({ exists: true, path: info.path, downloading: false, progress: 100 });
+          setModelStatus({ exists: true, path: info.path, size: info.size_bytes, downloading: false, progress: 100 });
 
           // 自动将模型加载到内存
           try {
@@ -169,14 +172,18 @@ function App() {
 
           {/* Bottom task bar */}
           <TaskBar task={selectedTask} />
+
+          {/* Batch progress */}
+          <BatchProgress />
         </div>
 
         {/* Right sidebar - controls */}
-        <ControlPanel />
+        <ControlPanel onOpenSettings={() => setSettingsOpen(true)} />
       </main>
 
-      {/* Model download dialog */}
+      {/* Dialogs */}
       {initialized && <ModelDialog />}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }
