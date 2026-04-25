@@ -59,7 +59,7 @@ jobs:
             target: x86_64-apple-darwin
 
           # Linux - ORT 原生支持
-          - platform: ubuntu-22.04
+          - platform: ubuntu-24.04
             args: ''
             name: Linux
             target: ''
@@ -95,7 +95,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend dependencies
         run: npm ci
@@ -103,12 +103,16 @@ jobs:
       # macOS Intel 交叉编译需要手动提供 x86_64 的 ONNX Runtime 库
       # `download-binaries` 在 ARM runner 上会下 ARM 版，链接 Intel 目标会失败
       # universal2 二进制同时包含 arm64 + x86_64，链接器自动选对应 slice
+      # 注意：pyke.io 不提供 x86_64-apple-darwin 预编译静态库，所以使用
+      # Microsoft 的 universal2 动态库（.dylib），通过 ORT_PREFER_DYNAMIC_LINK=1
+      # 启用动态链接，构建后由 Bundle dylib 步骤将库打包进 .app bundle
       - name: Download ONNX Runtime for macOS Intel cross-compilation
         if: matrix.name == 'macOS-Intel'
         run: |
           curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.18.1/onnxruntime-osx-universal2-1.18.1.tgz
           tar xzf onnxruntime-osx-universal2-1.18.1.tgz
           echo "ORT_LIB_LOCATION=$(pwd)/onnxruntime-osx-universal2-1.18.1/lib" >> $GITHUB_ENV
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> $GITHUB_ENV
 
       # 注意：不使用 rust-cache，避免与 tauri-action 冲突
       # tauri-action 会自动处理 Rust 依赖缓存
@@ -122,6 +126,37 @@ jobs:
         with:
           args: ${{ matrix.args }}
           releaseId: ${{ needs.create-release.outputs.release_id }}
+
+      # 将 libonnxruntime.dylib 打包进 .app bundle 的 Frameworks 目录
+      # 并修复二进制中的库引用路径
+      - name: Bundle ONNX Runtime dylib for macOS Intel
+        if: matrix.name == 'macOS-Intel'
+        run: |
+          # 查找 tauri 构建生成的 .app bundle
+          APP_BUNDLE=$(find src-tauri/target -name "*.app" -type d | head -1)
+          echo "Found app bundle: $APP_BUNDLE"
+
+          # 创建 Frameworks 目录
+          mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+
+          # 复制 libonnxruntime.dylib
+          cp onnxruntime-osx-universal2-1.18.1/lib/libonnxruntime*.dylib "$APP_BUNDLE/Contents/Frameworks/"
+
+          # 修复 dylib 自身的 install name（确保 @rpath 正确）
+          for DYLIB in "$APP_BUNDLE/Contents/Frameworks/"libonnxruntime*.dylib; do
+            chmod +w "$DYLIB"
+            install_name_tool -id "@rpath/$(basename "$DYLIB")" "$DYLIB" 2>/dev/null || true
+          done
+
+          # 修复主二进制中的引用路径
+          BINARY="$APP_BUNDLE/Contents/MacOS/mopng-desktop"
+          if [ -f "$BINARY" ]; then
+            # 添加 rpath 指向 Frameworks 目录
+            install_name_tool -add_rpath "@executable_path/../Frameworks" "$BINARY" 2>/dev/null || true
+            # 打印链接信息以便调试
+            echo "Binary dylib references:"
+            otool -L "$BINARY" | grep onnxruntime
+          fi
 
   publish-release:
     name: Publish Release
