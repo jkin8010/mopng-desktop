@@ -52,19 +52,19 @@ jobs:
             name: macOS-Apple-Silicon
             target: aarch64-apple-darwin
 
-          # macOS Intel (x64) - tract-onnx 支持全平台
+          # macOS Intel (x64) - universal2 ORT 库支持双架构
           - platform: macos-latest
             args: '--target x86_64-apple-darwin'
             name: macOS-Intel
             target: x86_64-apple-darwin
 
-          # Linux - tract-onnx 支持
+          # Linux - ORT 原生支持
           - platform: ubuntu-22.04
             args: ''
             name: Linux
             target: ''
 
-          # Windows - tract-onnx 支持
+          # Windows - ORT 原生支持
           - platform: windows-latest
             args: ''
             name: Windows
@@ -99,6 +99,16 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      # macOS Intel 交叉编译需要手动提供 x86_64 的 ONNX Runtime 库
+      # `download-binaries` 在 ARM runner 上会下 ARM 版，链接 Intel 目标会失败
+      # universal2 二进制同时包含 arm64 + x86_64，链接器自动选对应 slice
+      - name: Download ONNX Runtime for macOS Intel cross-compilation
+        if: matrix.name == 'macOS-Intel'
+        run: |
+          curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.18.1/onnxruntime-osx-universal2-1.18.1.tgz
+          tar xzf onnxruntime-osx-universal2-1.18.1.tgz
+          echo "ORT_LIB_LOCATION=$(pwd)/onnxruntime-osx-universal2-1.18.1/lib" >> $GITHUB_ENV
 
       # 注意：不使用 rust-cache，避免与 tauri-action 冲突
       # tauri-action 会自动处理 Rust 依赖缓存

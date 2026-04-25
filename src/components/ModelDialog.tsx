@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -11,9 +11,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useStore } from "@/store";
-import { AlertCircle, Download, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Download, CheckCircle, XCircle, Loader2, Globe } from "lucide-react";
 
-const MODEL_SIZE_MB = 460;
+const MODEL_SIZE_MB = 900;
 
 interface DownloadProgressEvent {
   bytes_downloaded: number;
@@ -48,16 +48,28 @@ function formatETA(seconds: number): string {
   return `${h}小时${m}分`;
 }
 
+interface ModelSource {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  default: boolean;
+}
+
 export function ModelDialog() {
   const { modelStatus, setModelStatus, setModelDialogOpen, modelDialogOpen } = useStore();
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const [sources, setSources] = useState<ModelSource[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState<string>("mocdn");
 
   // Listen for download progress events
   useEffect(() => {
     let mounted = true;
+    let unlistenProgress: UnlistenFn | null = null;
+    let unlistenComplete: UnlistenFn | null = null;
 
-    const setupListener = async () => {
-      const unlisten = await listen<DownloadProgressEvent>(
+    const setupListeners = async () => {
+      unlistenProgress = await listen<DownloadProgressEvent>(
         "model-download-progress",
         (event) => {
           if (!mounted) return;
@@ -73,18 +85,53 @@ export function ModelDialog() {
         }
       );
 
-      unlistenRef.current = unlisten;
+      unlistenComplete = await listen<ModelCompleteEvent>(
+        "model-download-complete",
+        (event) => {
+          if (!mounted) return;
+          const { exists, path, size_bytes } = event.payload;
+          // 加载模型到内存
+          invoke("init_model", { modelPath: path, provider: "coreml" }).catch(
+            (e) => console.warn("初始化模型失败:", e)
+          );
+          setModelStatus({
+            ...useStore.getState().modelStatus,
+            exists,
+            path,
+            size: size_bytes,
+            downloading: false,
+            progress: 100,
+            error: undefined,
+          });
+        }
+      );
     };
 
-    setupListener();
+    setupListeners();
 
     return () => {
       mounted = false;
-      unlistenRef.current?.();
+      unlistenProgress?.();
+      unlistenComplete?.();
     };
   }, [setModelStatus]);
 
+  // 加载可用下载源
+  useEffect(() => {
+    invoke<ModelSource[]>("get_model_sources").then((srcs) => {
+      setSources(srcs);
+      const def = srcs.find((s) => s.default);
+      if (def) setSelectedSourceId(def.id);
+    }).catch(() => {
+      // ignore - fallback to manual selection
+    });
+  }, []);
+
   const handleDownload = useCallback(async () => {
+    const src = sources.find((s) => s.id === selectedSourceId);
+    const url = src?.url;
+    if (!url) return;
+
     try {
       setModelStatus({
         ...useStore.getState().modelStatus,
@@ -93,35 +140,45 @@ export function ModelDialog() {
         progress: 0,
       });
 
-      const result = await invoke<{
-        success: boolean;
-        path: string;
-        error?: string;
-      }>("download_model", {});
+      const path = await invoke<string>("download_model", { sourceUrl: url });
 
-      if (result.success) {
+      // 加载模型到内存
+      try {
+        await invoke("init_model", { modelPath: path, provider: "coreml" });
+      } catch (initErr: any) {
         setModelStatus({
           ...useStore.getState().modelStatus,
-          exists: true,
           downloading: false,
-          progress: 100,
-          path: result.path,
+          error: `模型初始化失败: ${initErr?.message || initErr}`,
+        });
+        return;
+      }
+
+      setModelStatus({
+        ...useStore.getState().modelStatus,
+        exists: true,
+        path,
+        downloading: false,
+        progress: 100,
+        error: undefined,
+      });
+    } catch (err: any) {
+      const msg = err?.message || "";
+      // 取消下载不显示错误
+      if (msg === "下载已取消") {
+        setModelStatus({
+          ...useStore.getState().modelStatus,
+          downloading: false,
         });
       } else {
         setModelStatus({
           ...useStore.getState().modelStatus,
           downloading: false,
-          error: result.error || "下载失败",
+          error: msg || "下载失败",
         });
       }
-    } catch (err: any) {
-      setModelStatus({
-        ...useStore.getState().modelStatus,
-        downloading: false,
-        error: err?.message || "下载失败",
-      });
     }
-  }, [setModelStatus]);
+  }, [setModelStatus, sources, selectedSourceId]);
 
   const handleCancel = useCallback(async () => {
     try {
@@ -178,14 +235,49 @@ export function ModelDialog() {
           )}
 
           {!modelStatus.exists && !modelStatus.downloading && !modelStatus.error && (
-            <div className="bg-muted rounded-lg p-4 text-sm space-y-2">
-              <div className="flex items-center gap-2">
-                <Download className="w-4 h-4" />
-                <span>模型: birefnet.onnx</span>
+            <div className="space-y-3">
+              <div className="bg-muted rounded-lg p-4 text-sm space-y-2">
+                <div className="flex items-center gap-2">
+                  <Download className="w-4 h-4" />
+                  <span>模型: birefnet.onnx (FP32)</span>
+                </div>
+                <div className="text-muted-foreground">
+                  大小: ~{MODEL_SIZE_MB} MB
+                </div>
               </div>
-              <div className="text-muted-foreground">
-                大小: ~{MODEL_SIZE_MB} MB · 来源: HuggingFace
-              </div>
+
+              {/* 源选择 */}
+              {sources.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">选择下载源</label>
+                  <div className="grid gap-2">
+                    {sources.map((src) => (
+                      <button
+                        key={src.id}
+                        onClick={() => setSelectedSourceId(src.id)}
+                        className={`flex items-start gap-3 rounded-lg border p-3 text-left text-sm transition-colors ${
+                          selectedSourceId === src.id
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:bg-muted"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          checked={selectedSourceId === src.id}
+                          onChange={() => setSelectedSourceId(src.id)}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium">{src.name}</div>
+                          <div className="text-muted-foreground truncate">
+                            {src.description}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -194,6 +286,13 @@ export function ModelDialog() {
               {/* 进度条 */}
               <Progress value={modelStatus.progress} className="h-2.5" />
 
+              {modelStatus.bytesDownloaded === 0 ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>准备中...</span>
+                </div>
+              ) : (
+                <>
               {/* 主要数据行 */}
               <div className="flex justify-between items-center text-sm">
                 <span className="font-medium text-foreground">
@@ -232,6 +331,8 @@ export function ModelDialog() {
                   支持断点续传，关闭应用后再次下载将从上次进度继续
                 </div>
               )}
+              </>
+            )}
             </div>
           )}
 

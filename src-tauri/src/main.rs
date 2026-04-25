@@ -2,9 +2,15 @@ mod commands;
 mod models;
 
 fn main() {
-    // 加载 .env（开发/打包配置，用户无需知晓）
-    if let Err(e) = dotenvy::dotenv() {
-        log::debug!(".env not loaded: {}", e);
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    // 加载 .env（可从源码目录或运行目录配置环境变量）
+    // 支持的环境变量: MODEL_URL, MODEL_FILENAME
+    let env_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
+    if let Err(e) = dotenvy::from_path(&env_path) {
+        if let Err(e2) = dotenvy::dotenv() {
+            log::debug!(".env not loaded: {} / {}", e, e2);
+        }
     }
 
     tauri::Builder::default()
@@ -25,6 +31,8 @@ fn main() {
             commands::get_model_dir,
             commands::read_image_file,
             commands::pick_files,
+            commands::get_model_sources,
+            commands::select_output_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

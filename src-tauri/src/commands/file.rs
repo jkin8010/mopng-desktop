@@ -1,13 +1,5 @@
-use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_dialog::FilePath;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FileInfo {
-    pub path: String,
-    pub name: String,
-    pub size: u64,
-}
 
 /// 读取图像文件
 #[tauri::command]
@@ -33,7 +25,6 @@ pub fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {
             .filter_map(|f| match f {
                 FilePath::Path(p) => Some(p.to_string_lossy().to_string()),
                 FilePath::Url(u) => Some(u.to_string()),
-                _ => None,
             })
             .collect();
 
@@ -41,7 +32,6 @@ pub fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {
     })
 }
 
-/// 选择输出目录
 #[tauri::command]
 pub fn select_output_dir(app: AppHandle) -> Result<Option<String>, String> {
     tauri::async_runtime::block_on(async {

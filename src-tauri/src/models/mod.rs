@@ -1,5 +1,4 @@
 pub mod birefnet;
-pub mod session;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -43,19 +42,21 @@ pub struct ThumbnailParams {
 
 /// 初始化模型（由前端在确认模型存在后调用）
 #[tauri::command]
-pub fn init_model(model_path: String, provider: Option<String>) -> Result<(), String> {
+pub fn init_model(model_path: String, _provider: Option<String>) -> Result<(), String> {
     let path = PathBuf::from(model_path);
     if !path.exists() {
         return Err(format!("模型文件不存在: {:?}", path));
     }
 
-    let provider = provider.unwrap_or_else(|| "coreml".to_string());
+    log::info!("开始加载模型到内存...");
+    log::info!("模型路径: {:?}", path);
+    log::info!("模型大小: {} MB", path.metadata().ok().map(|m| m.len() / 1_048_576).unwrap_or(0));
 
-    birefnet::BirefnetSession::init(path, &provider)
-        .map_err(|e| format!("模型初始化失败: {}", e))?;
+    let result = birefnet::BirefnetSession::init(path)
+        .map_err(|e| format!("模型初始化失败: {}", e));
 
-    log::info!("BiRefNet 模型初始化成功，Provider: {}", provider);
-    Ok(())
+    log::info!("BiRefNet 模型初始化{:?}", result.as_ref().map(|_| "成功").unwrap_or(&"失败"));
+    result
 }
 
 /// 检查模型是否已加载到内存

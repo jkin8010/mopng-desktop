@@ -51,3 +51,6 @@ coverage/
 .LSOverride
 Icon
 ._*
+
+# oh-my-claude-code
+.omc/

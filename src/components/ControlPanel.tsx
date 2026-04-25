@@ -27,6 +27,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     updateSettings,
     updateTask,
     updateTaskResult,
+    selectTask,
     setProcessing,
   } = useStore();
 
@@ -51,7 +52,12 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
   const handleProcess = useCallback(async () => {
     if (!selectedTask) return;
 
-    updateTask(selectedTask.id, { status: "processing", progress: 0 });
+    // Sync task settings with current UI settings so canvas displays correctly
+    updateTask(selectedTask.id, {
+      status: "processing",
+      progress: 0,
+      settings: { ...currentSettings },
+    });
     setProcessing(true);
 
     try {
@@ -85,9 +91,15 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     if (pendingTasks.length === 0) return;
 
     setProcessing(true);
+    const total = pendingTasks.length;
 
-    for (const task of pendingTasks) {
+    for (let i = 0; i < total; i++) {
+      const task = pendingTasks[i];
+
+      // 选中当前处理的任务，让画布显示 loading 状态
+      selectTask(task.id);
       updateTask(task.id, { status: "processing", progress: 0 });
+      useStore.getState().setGlobalProgress(Math.round((i / total) * 100));
 
       try {
         const result = await invoke<{
@@ -105,6 +117,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
         });
 
         updateTaskResult(task.id, result);
+        useStore.getState().setGlobalProgress(Math.round(((i + 1) / total) * 100));
       } catch (error) {
         updateTask(task.id, {
           status: "error",
@@ -114,7 +127,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     }
 
     setProcessing(false);
-  }, [tasks, updateTask, updateTaskResult, setProcessing]);
+  }, [tasks, updateTask, updateTaskResult, selectTask, setProcessing]);
 
   const handleOpenOutput = useCallback(async () => {
     if (!selectedTask?.result?.outputPath) return;
@@ -123,7 +136,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
 
   const handleExport = useCallback(async () => {
     if (!selectedTask?.result?.outputPath) return;
-    await invoke("export_image", {
+    await invoke("export_image_dialog", {
       sourcePath: selectedTask.result.outputPath,
     });
   }, [selectedTask]);
@@ -185,6 +198,19 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
                 <SelectItem value="checkerboard">网格</SelectItem>
               </SelectContent>
             </Select>
+            {currentSettings.bgType === "color" && (
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="color"
+                  value={currentSettings.bgColor || "#ffffff"}
+                  onChange={(e) => updateSettings({ bgColor: e.target.value })}
+                  className="w-8 h-8 p-0.5 rounded cursor-pointer border border-border bg-transparent"
+                />
+                <span className="text-xs font-mono text-muted-foreground">
+                  {currentSettings.bgColor || "#ffffff"}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Quality */}
@@ -222,7 +248,9 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
               disabled={isProcessing}
             >
               <Play className="w-4 h-4 mr-2" />
-              批量处理 ({tasks.filter((t) => t.status === "idle").length})
+              {isProcessing
+                ? `批量处理中...`
+                : `批量处理 (${tasks.filter((t) => t.status === "idle").length})`}
             </Button>
           </div>
 

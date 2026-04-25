@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ZoomIn, ZoomOut, RotateCcw, ImageOff, Loader2 } from "lucide-react";
+import { useStore } from "@/store";
 import type { MattingTask } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +10,7 @@ interface PreviewCanvasProps {
 }
 
 export function PreviewCanvas({ task, toAssetUrl }: PreviewCanvasProps) {
+  const currentSettings = useStore((s) => s.currentSettings);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -64,6 +66,8 @@ export function PreviewCanvas({ task, toAssetUrl }: PreviewCanvasProps) {
   const imageSrc = showOriginal
     ? toAssetUrl(task.filePath)
     : toAssetUrl(task.result?.previewPath || task.result?.outputPath || task.filePath);
+  // Force re-fetch when preview changes (different bg-type → different file)
+  const imgKey = task.result ? `${task.id}-${task.result.previewPath}-${task.result.fileSize}` : task.id;
 
   return (
     <div
@@ -75,16 +79,17 @@ export function PreviewCanvas({ task, toAssetUrl }: PreviewCanvasProps) {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
-      {/* Checkerboard background */}
+      {/* Background based on current settings (live preview) */}
       <div
         className={cn(
           "absolute inset-0",
-          task.settings.bgType === "checkerboard" && "checkerboard"
+          currentSettings.bgType === "checkerboard" && "checkerboard",
+          currentSettings.bgType === "transparent" && "checkerboard"
         )}
         style={
-          task.settings.bgType === "color" && task.settings.bgColor
-            ? { backgroundColor: task.settings.bgColor }
-            : task.settings.bgType === "white"
+          currentSettings.bgType === "color" && currentSettings.bgColor
+            ? { backgroundColor: currentSettings.bgColor }
+            : currentSettings.bgType === "white"
             ? { backgroundColor: "#ffffff" }
             : undefined
         }
@@ -105,6 +110,7 @@ export function PreviewCanvas({ task, toAssetUrl }: PreviewCanvasProps) {
           </div>
         ) : (
           <img
+            key={imgKey}
             ref={imgRef}
             src={imageSrc}
             alt={task.fileName}

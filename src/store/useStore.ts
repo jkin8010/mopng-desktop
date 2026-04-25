@@ -23,6 +23,7 @@ interface AppState {
   updateSettings: (settings: Partial<MattingSettings>) => void;
   updateAppSettings: (settings: Partial<AppSettings>) => void;
   setProcessing: (processing: boolean) => void;
+  setGlobalProgress: (progress: number) => void;
   setDragOver: (over: boolean) => void;
   clearCompleted: () => void;
   clearAll: () => void;
@@ -99,6 +100,8 @@ export const useStore = create<AppState>()(
         })),
 
       setProcessing: (processing) => set({ isProcessing: processing }),
+
+      setGlobalProgress: (progress) => set({ globalProgress: progress }),
 
       setDragOver: (over) => set({ dragOver: over }),
 

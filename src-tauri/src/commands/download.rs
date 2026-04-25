@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -10,13 +10,13 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
 const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
     Some(url) => url,
-    None => "https://mocdn.mopng.cn/models/",
+    None => "https://assets-qise-cc.oss-cn-shenzhen.aliyuncs.com/motu/models/birefnet.onnx",
 };
 
 /// 编译时可覆盖的默认模型文件名
 const DEFAULT_MODEL_FILENAME: &str = match option_env!("MODEL_FILENAME") {
     Some(name) => name,
-    None => "birefnet_fp16.onnx",
+    None => "birefnet.onnx",
 };
 
 /// 运行时环境变量可覆盖模型 URL（用户级自定义）
@@ -35,11 +35,53 @@ fn model_download_url() -> String {
     let filename = model_filename();
     if url.ends_with('/') {
         format!("{}{}", url, filename)
-    } else if url.contains("huggingface") || url.contains("model.onnx") {
+    } else if url.ends_with(".onnx") || url.contains("huggingface") {
         url
     } else {
         format!("{}/{}", url, filename)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSource {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub url: String,
+    pub default: bool,
+}
+
+const HF_RAW_URL: &str = "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx";
+const HF_MIRROR_URL: &str = "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx";
+
+static CANCEL_DOWNLOAD: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+pub fn get_model_sources() -> Vec<ModelSource> {
+    let default_url = model_download_url();
+    vec![
+        ModelSource {
+            id: "mocdn".into(),
+            name: "MoCDN".into(),
+            description: "国内 CDN，速度快".into(),
+            url: default_url.clone(),
+            default: true,
+        },
+        ModelSource {
+            id: "huggingface".into(),
+            name: "HuggingFace".into(),
+            description: "海外源，需科学上网".into(),
+            url: HF_RAW_URL.to_string(),
+            default: false,
+        },
+        ModelSource {
+            id: "hf-mirror".into(),
+            name: "HF Mirror".into(),
+            description: "HuggingFace 国内镜像".into(),
+            url: HF_MIRROR_URL.to_string(),
+            default: false,
+        },
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,12 +113,6 @@ pub fn get_model_download_url() -> String {
 }
 
 #[tauri::command]
-pub fn get_model_path(app: AppHandle) -> Result<String, String> {
-    let path = model_file_path(&app)?;
-    Ok(path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
 pub fn check_model(app: AppHandle) -> Result<ModelInfo, String> {
     let path = model_file_path(&app)?;
     let exists = path.exists();
@@ -93,14 +129,15 @@ pub fn check_model(app: AppHandle) -> Result<ModelInfo, String> {
     })
 }
 
-/// 下载模型（同步命令，内部使用 async_runtime）
+/// 下载模型
 #[tauri::command]
-pub fn download_model(app: AppHandle) -> Result<String, String> {
-    tauri::async_runtime::block_on(async { download_model_inner(app).await })
+pub async fn download_model(app: AppHandle, source_url: Option<String>) -> Result<String, String> {
+    download_model_inner(app, source_url).await
 }
 
-async fn download_model_inner(app: AppHandle) -> Result<String, String> {
-    let url = model_download_url();
+async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Result<String, String> {
+    CANCEL_DOWNLOAD.store(false, Ordering::SeqCst);
+    let url = source_url.unwrap_or_else(model_download_url);
     let model_path = model_file_path(&app)?;
     let temp_path = model_path.with_extension("tmp");
 
@@ -167,6 +204,10 @@ async fn download_model_inner(app: AppHandle) -> Result<String, String> {
         .await
         .map_err(|e| format!("下载中断: {}", e))?
     {
+        if CANCEL_DOWNLOAD.load(Ordering::SeqCst) {
+            return Err("下载已取消".to_string());
+        }
+
         file.write_all(&chunk).map_err(|e| format!("写入失败: {}", e))?;
 
         let new_downloaded = downloaded_ref.fetch_add(chunk.len() as u64, Ordering::SeqCst) + chunk.len() as u64;
@@ -219,10 +260,11 @@ async fn download_model_inner(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 pub fn cancel_download(app: AppHandle) -> Result<(), String> {
+    CANCEL_DOWNLOAD.store(true, Ordering::SeqCst);
     let model_path = model_file_path(&app)?;
     let temp_path = model_path.with_extension("tmp");
     if temp_path.exists() {
-        fs::remove_file(&temp_path).map_err(|e| format!("删除临时文件失败: {}", e))?;
+        let _ = fs::remove_file(&temp_path);
     }
     Ok(())
 }

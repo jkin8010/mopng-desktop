@@ -1,6 +1,6 @@
 [package]
 name = "mopng-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "MoPNG Desktop - AI Image Matting Tool"
 authors = ["jkin8010"]
 edition = "2021"
@@ -18,7 +18,7 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["stream"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 ndarray = "0.17"
-tract-onnx = "0.21"
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
 uuid = { version = "1.8", features = ["v4"] }
 anyhow = "1.0"
 tokio = { version = "1.36", features = ["rt-multi-thread", "fs"] }

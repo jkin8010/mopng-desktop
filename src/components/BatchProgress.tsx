@@ -32,7 +32,9 @@ export function BatchProgress() {
         <div className="flex-1 flex items-center gap-3">
           {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
           <span className="text-xs font-medium">
-            {isProcessing
+            {processing.length > 0
+              ? `正在处理第 ${done + 1} 张 / 共 ${total} 张`
+              : isProcessing
               ? `处理中 ${done}/${total}`
               : `已完成 ${done}/${total}`}
           </span>

@@ -11,24 +11,22 @@ pub use self::file::*;
 use crate::models::{MattingSettings, ProcessParams, ProcessResult, ThumbnailParams};
 
 pub mod download;
-pub mod export;
 pub mod file;
 
 /// Process an image using BiRefNet ONNX model
 #[command]
-pub fn process_image(
+pub async fn process_image(
     params: ProcessParams,
     app: tauri::AppHandle,
 ) -> Result<ProcessResult, String> {
     let start_time = std::time::Instant::now();
 
-    // Get the app data directory for output
-    let app_data_dir = app
+    // Use Downloads folder for output
+    let output_dir = app
         .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-
-    let output_dir = app_data_dir.join("output");
+        .download_dir()
+        .map_err(|e| format!("Failed to get downloads dir: {}", e))?
+        .join("mopng_output");
     fs::create_dir_all(&output_dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     // Load and preprocess the image
@@ -40,8 +38,13 @@ pub fn process_image(
 
     let (orig_width, orig_height) = (img.width(), img.height());
 
-    // Run BiRefNet inference
-    let mask = run_birefnet_inference(&img)?;
+    // Run BiRefNet inference on a blocking thread so the async IPC stays responsive
+    let inference_img = img.clone();
+    let mask = tokio::task::spawn_blocking(move || {
+        run_birefnet_inference(inference_img)
+    })
+    .await
+    .map_err(|e| format!("Inference thread failed: {}", e))??;
 
     // Apply mask to create the output image
     let output = apply_mask(&img, &mask, &params.settings)?;
@@ -71,28 +74,37 @@ pub fn process_image(
         _ => ImageFormat::Png,
     };
 
-    // For JPEG, we need to composite on a background if transparent
-    let final_output = if ext == "jpg" && params.settings.bg_type != "color" {
-        composite_on_background(&output, &params.settings)?
+    // Save output WITHOUT background baked in (transparent for PNG/WebP)
+    // Background type is only applied at export time and for preview
+    println!(
+        "[process_image] bg_type={}, bg_color={:?}, output_format={}",
+        params.settings.bg_type, params.settings.bg_color, params.settings.output_format
+    );
+    if ext == "jpg" {
+        // JPG doesn't support alpha, must composite on background
+        let jpg_output = apply_bg_type(&output, &params.settings, "jpg")?;
+        jpg_output
+            .save_with_format(&output_path, output_format)
+            .map_err(|e| format!("Failed to save output: {}", e))?;
     } else {
+        // Save as transparent RGBA (PNG/WebP)
         output
-    };
+            .save_with_format(&output_path, output_format)
+            .map_err(|e| format!("Failed to save output: {}", e))?;
+    }
 
-    final_output
-        .save_with_format(&output_path, output_format)
-        .map_err(|e| format!("Failed to save output: {}", e))?;
-
-    // Generate preview
+    // Generate transparent preview for canvas display (no background baked in)
+    // Canvas background div handles visual feedback for different bg types
     let preview_filename = format!(
         "{}_preview.png",
         img_path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("output")
+            .unwrap_or("output"),
     );
     let preview_path = output_dir.join(&preview_filename);
 
-    let preview = create_preview(&final_output, &params.settings)?;
+    let preview = create_preview(&output)?;
     preview
         .save_with_format(&preview_path, ImageFormat::Png)
         .map_err(|e| format!("Failed to save preview: {}", e))?;
@@ -153,26 +165,37 @@ pub fn generate_thumbnail(params: ThumbnailParams) -> Result<String, String> {
 pub fn open_in_folder(path: String) -> Result<(), String> {
     let path = Path::new(&path);
 
+    // If the file doesn't exist, open its parent directory
+    let target = if path.exists() {
+        path.to_path_buf()
+    } else if let Some(parent) = path.parent() {
+        parent.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
-            .args(["/select,", path.to_string_lossy().as_ref()])
+            .args(["/select,", target.to_string_lossy().as_ref()])
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg("-R")
-            .arg(path)
+        let mut cmd = std::process::Command::new("open");
+        if path.exists() {
+            cmd.arg("-R");
+        }
+        cmd.arg(&target)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
     #[cfg(target_os = "linux")]
     {
-        let parent = path.parent().unwrap_or(path);
+        let parent = target.parent().unwrap_or(&target);
         std::process::Command::new("xdg-open")
             .arg(parent)
             .spawn()
@@ -184,7 +207,7 @@ pub fn open_in_folder(path: String) -> Result<(), String> {
 
 /// Export image to a user-selected location (dialog-based)
 #[command]
-pub fn export_image_dialog(
+pub async fn export_image_dialog(
     source_path: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -196,14 +219,19 @@ pub fn export_image_dialog(
         .and_then(|n| n.to_str())
         .unwrap_or("output.png");
 
-    let save_path = app
-        .dialog()
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    app.dialog()
         .file()
         .set_file_name(file_name)
         .add_filter("PNG", &["png"])
         .add_filter("JPEG", &["jpg", "jpeg"])
         .add_filter("WebP", &["webp"])
-        .blocking_save_file();
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+
+    let save_path = rx.await.map_err(|_| "Dialog interrupted".to_string())?;
 
     match save_path {
         Some(FilePath::Path(path)) => {
@@ -220,7 +248,7 @@ pub fn export_image_dialog(
 // Internal helper functions
 
 fn run_birefnet_inference(
-    img: &image::DynamicImage,
+    img: image::DynamicImage,
 ) -> Result<ndarray::Array2<f32>, String> {
     println!(
         "[Inference] Starting BiRefNet inference for {}x{} image",
@@ -232,7 +260,7 @@ fn run_birefnet_inference(
         .ok_or("模型未初始化，请先加载模型")?;
 
     let output = guard
-        .run(img.clone())
+        .run(img)
         .map_err(|e| format!("推理失败: {}", e))?;
 
     // output: Array3<u8> with shape (height, width, 1)
@@ -271,30 +299,82 @@ fn apply_mask(
     Ok(image::DynamicImage::ImageRgba8(output))
 }
 
-fn composite_on_background(
+/// Apply the selected background type to the RGBA output image.
+fn apply_bg_type(
     img: &image::DynamicImage,
     settings: &MattingSettings,
+    ext: &str,
+) -> Result<image::DynamicImage, String> {
+    let supports_alpha = ext != "jpg";
+
+    match settings.bg_type.as_str() {
+        "transparent" if supports_alpha => Ok(img.clone()),
+        "white" => composite_on_solid(img, 255, 255, 255),
+        "color" => {
+            let (r, g, b) = settings
+                .bg_color
+                .as_ref()
+                .and_then(|c| parse_color(c))
+                .unwrap_or((255, 255, 255));
+            composite_on_solid(img, r, g, b)
+        }
+        "checkerboard" => composite_on_checkerboard(img),
+        // Fallback: composite on white (e.g. transparent + JPG)
+        _ => composite_on_solid(img, 255, 255, 255),
+    }
+}
+
+fn composite_on_solid(
+    img: &image::DynamicImage,
+    r: u8,
+    g: u8,
+    b: u8,
 ) -> Result<image::DynamicImage, String> {
     let (width, height) = (img.width(), img.height());
     let mut output = image::RgbImage::new(width, height);
-
-    // Parse background color
-    let bg_color = if let Some(color) = &settings.bg_color {
-        parse_color(color).unwrap_or((255, 255, 255))
-    } else {
-        (255, 255, 255)
-    };
 
     for y in 0..height {
         for x in 0..width {
             let pixel = img.get_pixel(x, y);
             let alpha = pixel[3] as f32 / 255.0;
 
-            let r = (pixel[0] as f32 * alpha + bg_color.0 as f32 * (1.0 - alpha)) as u8;
-            let g = (pixel[1] as f32 * alpha + bg_color.1 as f32 * (1.0 - alpha)) as u8;
-            let b = (pixel[2] as f32 * alpha + bg_color.2 as f32 * (1.0 - alpha)) as u8;
+            let pr = (pixel[0] as f32 * alpha + r as f32 * (1.0 - alpha)) as u8;
+            let pg = (pixel[1] as f32 * alpha + g as f32 * (1.0 - alpha)) as u8;
+            let pb = (pixel[2] as f32 * alpha + b as f32 * (1.0 - alpha)) as u8;
 
-            output.put_pixel(x, y, image::Rgb([r, g, b]));
+            output.put_pixel(x, y, image::Rgb([pr, pg, pb]));
+        }
+    }
+
+    Ok(image::DynamicImage::ImageRgb8(output))
+}
+
+fn composite_on_checkerboard(
+    img: &image::DynamicImage,
+) -> Result<image::DynamicImage, String> {
+    let (width, height) = (img.width(), img.height());
+    let mut output = image::RgbImage::new(width, height);
+    let tile_size = 16;
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = img.get_pixel(x, y);
+            let alpha = pixel[3] as f32 / 255.0;
+
+            let tx = x / tile_size;
+            let ty = y / tile_size;
+            let is_light = (tx + ty) % 2 == 0;
+            let (bg_r, bg_g, bg_b) = if is_light {
+                (204u8, 204u8, 204u8)
+            } else {
+                (153u8, 153u8, 153u8)
+            };
+
+            let pr = (pixel[0] as f32 * alpha + bg_r as f32 * (1.0 - alpha)) as u8;
+            let pg = (pixel[1] as f32 * alpha + bg_g as f32 * (1.0 - alpha)) as u8;
+            let pb = (pixel[2] as f32 * alpha + bg_b as f32 * (1.0 - alpha)) as u8;
+
+            output.put_pixel(x, y, image::Rgb([pr, pg, pb]));
         }
     }
 
@@ -303,7 +383,6 @@ fn composite_on_background(
 
 fn create_preview(
     img: &image::DynamicImage,
-    _settings: &MattingSettings,
 ) -> Result<image::DynamicImage, String> {
     // Create a smaller preview for display
     let max_preview_size = 800;

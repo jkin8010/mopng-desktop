@@ -11,6 +11,7 @@ import { TaskBar } from "@/components/TaskBar";
 import { ModelDialog } from "@/components/ModelDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { BatchProgress } from "@/components/BatchProgress";
+import { Loader2 } from "lucide-react";
 import type { MattingTask } from "@/types";
 import { generateId } from "@/lib/id";
 
@@ -147,6 +148,22 @@ function App() {
     [setDragOver]
   );
 
+  if (!initialized) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen w-screen bg-background text-foreground">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          </div>
+          <div className="text-center">
+            <h1 className="text-lg font-semibold">模图桌面版</h1>
+            <p className="text-sm text-muted-foreground mt-1">正在初始化...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground select-none"
@@ -162,6 +179,7 @@ function App() {
           tasks={tasks}
           selectedId={selectedTaskId}
           onSelect={selectTask}
+          onFilesSelected={handleFiles}
         />
 
         {/* Center - preview */}
@@ -182,7 +200,7 @@ function App() {
       </main>
 
       {/* Dialogs */}
-      {initialized && <ModelDialog />}
+      <ModelDialog />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );

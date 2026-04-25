@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Dialog,
@@ -22,7 +23,6 @@ import {
   Info,
 } from "lucide-react";
 import { DEFAULT_APP_SETTINGS } from "@/types";
-import { useEffect } from "react";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -35,6 +35,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<"general" | "model" | "about">(
     "general"
   );
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion("0.2.0"));
+  }, []);
 
   // 监听模型下载进度
   useEffect(() => {
@@ -344,7 +349,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     </p>
                   </div>
                   <div className="text-xs text-muted-foreground space-y-1">
-                    <p>版本 0.1.0</p>
+                    <p>版本 {appVersion || "0.2.0"}</p>
                     <p>基于 BiRefNet 模型</p>
                     <p>Powered by Tauri + React</p>
                   </div>

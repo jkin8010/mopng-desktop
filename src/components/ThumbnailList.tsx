@@ -1,5 +1,5 @@
-import { useRef } from "react";
 import { X, ImagePlus, Loader2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "@/store";
 import type { MattingTask } from "@/types";
 import { cn } from "@/lib/utils";
@@ -8,48 +8,37 @@ interface ThumbnailListProps {
   tasks: MattingTask[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  onFilesSelected?: (paths: string[]) => void;
 }
 
-export function ThumbnailList({ tasks, selectedId, onSelect }: ThumbnailListProps) {
+export function ThumbnailList({ tasks, selectedId, onSelect, onFilesSelected }: ThumbnailListProps) {
   const removeTask = useStore((s) => s.removeTask);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    const paths = files.map((f) => {
-      // For web, we need to use Object URL
-      return URL.createObjectURL(f);
+  const handleFileSelect = async () => {
+    const files = await open({
+      multiple: true,
+      filters: [{
+        name: "图片",
+        extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"],
+      }],
     });
 
-    // In Tauri, files will have path property
-    const tauriPaths = files.map((f: any) => f.path || URL.createObjectURL(f));
-
-    // Dispatch custom event or call App's handleFiles through a global or callback
-    // For now, we'll use a workaround by storing in a global
-    (window as any).__pendingFiles = tauriPaths;
-    window.dispatchEvent(new CustomEvent("pending-files"));
+    // open() returns string[] | null in Tauri v2
+    if (files && files.length > 0) {
+      onFilesSelected?.(files);
+    }
   };
 
   return (
     <div className="w-48 flex flex-col border-r border-border bg-card">
       <div className="p-3 border-b border-border">
         <button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={handleFileSelect}
           className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-medium"
         >
           <ImagePlus className="w-4 h-4" />
           添加图片
         </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*"
-          className="hidden"
-          onChange={handleFileSelect}
-        />
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
