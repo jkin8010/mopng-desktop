@@ -147,10 +147,10 @@ mod tests {
 
     #[test]
     fn test_model_loading() {
-        // Model path: ~/Library/Application Support/cn.mopng.desktop/models/birefnet.onnx
+        // Model path: ~/Library/Application Support/cn.mopng.desktop/models/model_fp16.onnx
         let home = std::env::var("HOME").unwrap();
         let model_path = PathBuf::from(format!(
-            "{}/Library/Application Support/cn.mopng.desktop/models/birefnet.onnx",
+            "{}/Library/Application Support/cn.mopng.desktop/models/model_fp16.onnx",
             home
         ));
 

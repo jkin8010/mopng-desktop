@@ -10,13 +10,13 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
 const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
     Some(url) => url,
-    None => "https://assets-qise-cc.oss-cn-shenzhen.aliyuncs.com/motu/models/birefnet.onnx",
+    None => "https://modelscope.cn/models/onnx-community/BiRefNet-COD-epoch_125/resolve/master/onnx/model_fp16.onnx",
 };
 
 /// 编译时可覆盖的默认模型文件名
 const DEFAULT_MODEL_FILENAME: &str = match option_env!("MODEL_FILENAME") {
     Some(name) => name,
-    None => "birefnet.onnx",
+    None => "model_fp16.onnx",
 };
 
 /// 运行时环境变量可覆盖模型 URL（用户级自定义）
@@ -61,9 +61,9 @@ pub fn get_model_sources() -> Vec<ModelSource> {
     let default_url = model_download_url();
     vec![
         ModelSource {
-            id: "mocdn".into(),
-            name: "MoCDN".into(),
-            description: "国内 CDN，速度快".into(),
+            id: "modelscope".into(),
+            name: "ModelScope".into(),
+            description: "魔搭社区，国内可直接访问".into(),
             url: default_url.clone(),
             default: true,
         },
@@ -103,8 +103,8 @@ pub struct ModelInfo {
 #[tauri::command]
 pub fn get_model_download_url() -> String {
     let url = model_url();
-    if url.contains("mocdn.mopng.cn") {
-        "MoCDN".to_string()
+    if url.contains("modelscope.cn") {
+        "ModelScope".to_string()
     } else if url.contains("huggingface") {
         "HuggingFace".to_string()
     } else {
