@@ -114,6 +114,36 @@ jobs:
           echo "ORT_LIB_LOCATION=$(pwd)/onnxruntime-osx-universal2-1.18.1/lib" >> $GITHUB_ENV
           echo "ORT_PREFER_DYNAMIC_LINK=1" >> $GITHUB_ENV
 
+      # macOS 代码签名：导入 Developer ID 证书
+      - name: Setup macOS code signing
+        if: matrix.platform == 'macos-latest'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.KEYCHAIN_PWD }}
+        run: |
+          # 创建临时 keychain
+          KEYCHAIN_FILE=$RUNNER_TEMP/build.keychain
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_FILE"
+          security default-keychain -s "$KEYCHAIN_FILE"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_FILE"
+          security set-keychain-settings -lut 900 "$KEYCHAIN_FILE"
+
+          # 解码并导入 p12 证书
+          echo "$MACOS_CERTIFICATE" | base64 --decode -o "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$KEYCHAIN_FILE" \
+            -P "$MACOS_CERTIFICATE_PWD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+
+          # 允许 codesign 访问证书（避免 GUI 弹窗）
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_FILE" 2>/dev/null || true
+
+          echo "Signing identity configured:"
+          security find-identity -v -p basic "$KEYCHAIN_FILE"
+
       # 注意：不使用 rust-cache，避免与 tauri-action 冲突
       # tauri-action 会自动处理 Rust 依赖缓存
       - name: Build Tauri App
@@ -157,6 +187,35 @@ jobs:
             echo "Binary dylib references:"
             otool -L "$BINARY" | grep onnxruntime
           fi
+
+      # macOS 公证 (Notarization)
+      # 将 .dmg 提交给 Apple 公证，消除 Gatekeeper "无法验证开发者" 弹窗
+      - name: Notarize macOS app
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          # 写出 API 私钥文件
+          echo "$APPLE_API_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+
+          # 找到构建产物 .dmg
+          DMG_PATH=$(find src-tauri/target -name "*.dmg" -type f | head -1)
+          echo "Notarizing: $DMG_PATH"
+
+          # 提交公证
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --team-id "K75279AUL7" \
+            --wait \
+            --timeout 10m
+
+          # 装订公证票据到 .dmg
+          xcrun stapler staple "$DMG_PATH" || true
+          echo "Notarization complete"
 
   publish-release:
     name: Publish Release

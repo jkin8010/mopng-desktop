@@ -49,8 +49,8 @@
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "10.13",
-      "signingIdentity": null,
-      "entitlements": null
+      "signingIdentity": "Developer ID Application: Jian Jin (K75279AUL7)",
+      "entitlements": "entitlements.plist"
     },
     "windows": {
       "certificateThumbprint": null,
