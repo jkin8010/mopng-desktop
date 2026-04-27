@@ -186,7 +186,7 @@ function App() {
         <div className="flex-1 flex flex-col relative">
           {dragOver && <DropZone />}
 
-          <PreviewCanvas task={selectedTask} toAssetUrl={toAssetUrl} />
+          <PreviewCanvas task={selectedTask} />
 
           {/* Bottom task bar */}
           <TaskBar task={selectedTask} />

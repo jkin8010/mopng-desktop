@@ -21,9 +21,39 @@ export function TaskBar({ task }: TaskBarProps) {
 
   const handleExport = async () => {
     if (!task?.result?.outputPath) return;
-    await invoke("export_image_dialog", {
-      sourcePath: task.result.outputPath,
-    });
+    const state = useStore.getState();
+    const isTransparent = state.currentSettings.bgType === "transparent";
+    const exportFn = state.konvaExportFn;
+
+    console.log("[TaskBar export] bgType=", state.currentSettings.bgType, "exportFn=", !!exportFn);
+
+    try {
+      if (isTransparent || !exportFn) {
+        console.log("[TaskBar export] falling back to export_image_dialog (transparent or no engine)");
+        const result = await invoke<string>("export_image_dialog", {
+          sourcePath: task.result.outputPath,
+        });
+        console.log("[TaskBar export] export_image_dialog result:", result);
+      } else {
+        const ext = state.currentSettings.outputFormat;
+        const suggestedName = task.fileName.replace(/\.[^.]+$/, "") + "_matting." + ext;
+        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        const quality = ext === "png" ? undefined : 95;
+        let dataUrl: string;
+        try {
+          dataUrl = exportFn(mimeType, quality) || "";
+        } catch (fnErr) {
+          console.error("[TaskBar export] Konva exportFn threw:", fnErr);
+          return;
+        }
+        console.log("[TaskBar export] dataUrl length:", dataUrl.length, "mimeType:", mimeType);
+        if (!dataUrl) return;
+        const result = await invoke<string>("save_data_url", { dataUrl, suggestedName });
+        console.log("[TaskBar export] saved to:", result);
+      }
+    } catch (e) {
+      console.error("[TaskBar export] failed:", e);
+    }
   };
 
   return (

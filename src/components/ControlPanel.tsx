@@ -1,6 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Play, FolderOpen, Download, Settings, Wrench } from "lucide-react";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { Play, FolderOpen, Download, Settings, Wrench, ImagePlus, Lock, Unlock } from "lucide-react";
 import { useStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -12,7 +14,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { MattingMode, OutputFormat, BgType } from "@/types";
+import { GradientAnglePicker, angleToCoords, coordsToAngle } from "@/components/GradientAnglePicker";
+import { Switch } from "@/components/ui/switch";
+import { ScrubInput } from "@/components/ui/scrub-input";
+import { SIZE_TEMPLATES, deriveTemplateId } from "@/types";
+import type { MattingMode, OutputFormat, BgType, SizeTemplateId } from "@/types";
 
 interface ControlPanelProps {
   onOpenSettings: () => void;
@@ -49,10 +55,117 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     updateSettings({ quality: value[0] });
   };
 
+  const handleOpacityChange = (value: number[]) => {
+    updateSettings({ bgOpacity: value[0] });
+  };
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState<SizeTemplateId>(
+    deriveTemplateId(currentSettings),
+  );
+  const [aspectLocked, setAspectLocked] = useState(true);
+  const aspectRatioRef = useRef(4 / 3);
+
+  const handleTemplateChange = (templateId: string) => {
+    const id = templateId as SizeTemplateId;
+    setSelectedTemplateId(id);
+    if (id === "original") {
+      updateSettings({ targetWidth: undefined, targetHeight: undefined });
+    } else if (id === "custom") {
+      if (currentSettings.targetWidth == null || currentSettings.targetHeight == null) {
+        updateSettings({ targetWidth: 800, targetHeight: 600 });
+      }
+      aspectRatioRef.current = (currentSettings.targetWidth ?? 800) / (currentSettings.targetHeight ?? 600);
+    } else {
+      const tpl = SIZE_TEMPLATES.find((t) => t.id === id);
+      if (tpl) {
+        updateSettings({ targetWidth: tpl.width, targetHeight: tpl.height });
+      }
+    }
+  };
+
+  const handlePickBgImage = useCallback(async () => {
+    try {
+      const selected = await open({
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
+        multiple: false,
+      });
+      if (selected) {
+        const url = convertFileSrc(selected);
+        updateSettings({ bgImageUrl: url });
+      }
+    } catch (e) {
+      console.error("Failed to pick background image:", e);
+    }
+  }, [updateSettings]);
+
+  const handleGradientAngleChange = (angle: number) => {
+    const g = currentSettings.bgGradient;
+    const stops = g?.colorStops ?? [
+      { offset: 0, color: "#000000" },
+      { offset: 1, color: "#ffffff" },
+    ];
+    const { x1, y1, x2, y2 } = angleToCoords(angle);
+    updateSettings({
+      bgGradient: {
+        type: "linear",
+        colorStops: stops,
+        x1,
+        y1,
+        x2,
+        y2,
+      },
+    });
+  };
+
+  const handleGradientStartColor = (color: string) => {
+    const stops = currentSettings.bgGradient?.colorStops ?? [
+      { offset: 0, color: "#000000" },
+      { offset: 1, color: "#ffffff" },
+    ];
+    stops[0] = { offset: 0, color };
+    const g = currentSettings.bgGradient;
+    updateSettings({
+      bgGradient: {
+        type: "linear",
+        colorStops: stops,
+        x1: g?.x1 ?? 0,
+        y1: g?.y1 ?? 0,
+        x2: g?.x2 ?? 1,
+        y2: g?.y2 ?? 0,
+      },
+    });
+  };
+
+  const handleGradientEndColor = (color: string) => {
+    const stops = currentSettings.bgGradient?.colorStops ?? [
+      { offset: 0, color: "#000000" },
+      { offset: 1, color: "#ffffff" },
+    ];
+    stops[1] = { offset: 1, color };
+    const g = currentSettings.bgGradient;
+    updateSettings({
+      bgGradient: {
+        type: "linear",
+        colorStops: stops,
+        x1: g?.x1 ?? 0,
+        y1: g?.y1 ?? 0,
+        x2: g?.x2 ?? 1,
+        y2: g?.y2 ?? 0,
+      },
+    });
+  };
+
+  const currentAngle = (() => {
+    const g = currentSettings.bgGradient;
+    if (g?.x1 != null && g?.y1 != null && g?.x2 != null && g?.y2 != null) {
+      return Math.round(coordsToAngle(g.x1, g.y1, g.x2, g.y2));
+    }
+    return 0;
+  })();
+
   const handleProcess = useCallback(async () => {
     if (!selectedTask) return;
 
-    // Sync task settings with current UI settings so canvas displays correctly
     updateTask(selectedTask.id, {
       status: "processing",
       progress: 0,
@@ -68,6 +181,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
         format: "png" | "jpg" | "webp";
         fileSize: number;
         previewPath: string;
+        maskDataUrl?: string;
       }>("process_image", {
         params: {
           filePath: selectedTask.filePath,
@@ -96,7 +210,6 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     for (let i = 0; i < total; i++) {
       const task = pendingTasks[i];
 
-      // 选中当前处理的任务，让画布显示 loading 状态
       selectTask(task.id);
       updateTask(task.id, { status: "processing", progress: 0 });
       useStore.getState().setGlobalProgress(Math.round((i / total) * 100));
@@ -109,6 +222,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
           format: "png" | "jpg" | "webp";
           fileSize: number;
           previewPath: string;
+          maskDataUrl?: string;
         }>("process_image", {
           params: {
             filePath: task.filePath,
@@ -136,9 +250,45 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
 
   const handleExport = useCallback(async () => {
     if (!selectedTask?.result?.outputPath) return;
-    await invoke("export_image_dialog", {
-      sourcePath: selectedTask.result.outputPath,
-    });
+    const state = useStore.getState();
+    const isTransparent = state.currentSettings.bgType === "transparent";
+    const exportFn = state.konvaExportFn;
+
+    console.log("[export] bgType=", state.currentSettings.bgType, "exportFn=", !!exportFn);
+
+    try {
+      if (isTransparent || !exportFn) {
+        console.log("[export] falling back to export_image_dialog (transparent or no engine)");
+        const result = await invoke<string>("export_image_dialog", {
+          sourcePath: selectedTask.result.outputPath,
+        });
+        console.log("[export] export_image_dialog result:", result);
+      } else {
+        const ext = state.currentSettings.outputFormat;
+        const suggestedName = selectedTask.fileName.replace(/\.[^.]+$/, "") + "_matting." + ext;
+        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        const quality = ext === "png" ? undefined : 95;
+        let dataUrl: string;
+        try {
+          dataUrl = exportFn(mimeType, quality) || "";
+        } catch (fnErr) {
+          console.error("[export] Konva exportFn threw:", fnErr);
+          return;
+        }
+        console.log("[export] dataUrl length:", dataUrl.length, "mimeType:", mimeType);
+        if (!dataUrl) {
+          console.warn("[export] empty dataUrl from Konva export");
+          return;
+        }
+        const result = await invoke<string>("save_data_url", {
+          dataUrl,
+          suggestedName,
+        });
+        console.log("[export] saved to:", result);
+      }
+    } catch (e) {
+      console.error("[export] failed:", e);
+    }
   }, [selectedTask]);
 
   return (
@@ -196,8 +346,11 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
                 <SelectItem value="white">白色</SelectItem>
                 <SelectItem value="color">纯色</SelectItem>
                 <SelectItem value="checkerboard">网格</SelectItem>
+                <SelectItem value="image">图片</SelectItem>
+                <SelectItem value="gradient">渐变</SelectItem>
               </SelectContent>
             </Select>
+
             {currentSettings.bgType === "color" && (
               <div className="flex items-center gap-2 pt-1">
                 <input
@@ -209,6 +362,167 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
                 <span className="text-xs font-mono text-muted-foreground">
                   {currentSettings.bgColor || "#ffffff"}
                 </span>
+              </div>
+            )}
+
+            {currentSettings.bgType === "image" && (
+              <div className="space-y-2 pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={handlePickBgImage}
+                >
+                  <ImagePlus className="w-3.5 h-3.5 mr-1.5" />
+                  选择背景图片
+                </Button>
+                {currentSettings.bgImageUrl && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    已选择背景图片
+                  </p>
+                )}
+              </div>
+            )}
+
+            {currentSettings.bgType === "gradient" && (
+              <div className="space-y-3 pt-1">
+                <div className="space-y-1.5">
+                  <label className="text-xs text-muted-foreground">方向</label>
+                  <GradientAnglePicker
+                    angleDeg={currentAngle}
+                    onAngleChange={handleGradientAngleChange}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">起始色</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={currentSettings.bgGradient?.colorStops?.[0]?.color ?? "#000000"}
+                        onChange={(e) => handleGradientStartColor(e.target.value)}
+                        className="w-7 h-7 p-0.5 rounded cursor-pointer border border-border bg-transparent"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">结束色</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={currentSettings.bgGradient?.colorStops?.[1]?.color ?? "#ffffff"}
+                        onChange={(e) => handleGradientEndColor(e.target.value)}
+                        className="w-7 h-7 p-0.5 rounded cursor-pointer border border-border bg-transparent"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Background Opacity */}
+          {(currentSettings.bgType === "color" ||
+            currentSettings.bgType === "image" ||
+            currentSettings.bgType === "gradient") && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-muted-foreground">背景不透明度</label>
+                <span className="text-xs font-mono">{currentSettings.bgOpacity}%</span>
+              </div>
+              <Slider
+                value={[currentSettings.bgOpacity]}
+                onValueChange={handleOpacityChange}
+                min={0}
+                max={100}
+                step={1}
+              />
+            </div>
+          )}
+
+          {/* Size Template */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground">尺寸模板</label>
+            <Select value={selectedTemplateId} onValueChange={handleTemplateChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SIZE_TEMPLATES.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {selectedTemplateId === "custom" && (
+              <div className="grid items-end gap-1 pt-1" style={{ gridTemplateColumns: "1fr auto 1fr" }}>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">宽度 (px)</label>
+                  <ScrubInput
+                    value={currentSettings.targetWidth ?? 800}
+                    onChange={(v) => {
+                      setSelectedTemplateId("custom");
+                      if (aspectLocked) {
+                        updateSettings({ targetWidth: v, targetHeight: Math.max(1, Math.round(v / aspectRatioRef.current)) });
+                      } else {
+                        aspectRatioRef.current = v / (currentSettings.targetHeight ?? 600);
+                        updateSettings({ targetWidth: v });
+                      }
+                    }}
+                    min={1}
+                    max={10000}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-7 h-8 rounded hover:bg-muted transition-colors text-muted-foreground"
+                  title={aspectLocked ? "解锁宽高比" : "锁定宽高比"}
+                  onClick={() => {
+                    const w = currentSettings.targetWidth ?? 800;
+                    const h = currentSettings.targetHeight ?? 600;
+                    aspectRatioRef.current = w / h;
+                    setAspectLocked(!aspectLocked);
+                  }}
+                >
+                  {aspectLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                </button>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">高度 (px)</label>
+                  <ScrubInput
+                    value={currentSettings.targetHeight ?? 600}
+                    onChange={(v) => {
+                      setSelectedTemplateId("custom");
+                      if (aspectLocked) {
+                        updateSettings({ targetHeight: v, targetWidth: Math.max(1, Math.round(v * aspectRatioRef.current)) });
+                      } else {
+                        aspectRatioRef.current = (currentSettings.targetWidth ?? 800) / v;
+                        updateSettings({ targetHeight: v });
+                      }
+                    }}
+                    min={1}
+                    max={10000}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedTemplateId !== "original" && (
+              <div className="flex items-center gap-2 pt-1">
+                <Switch
+                  id="maintain-ar"
+                  checked={currentSettings.maintainAspectRatio}
+                  onCheckedChange={(v) => updateSettings({ maintainAspectRatio: v })}
+                />
+                <label
+                  htmlFor="maintain-ar"
+                  className="text-xs text-muted-foreground cursor-pointer select-none"
+                >
+                  保持宽高比 (等比缩放居中)
+                </label>
               </div>
             )}
           </div>

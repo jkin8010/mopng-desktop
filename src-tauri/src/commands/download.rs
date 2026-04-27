@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
 const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
     Some(url) => url,
-    None => "https://assets-qise-cc.oss-cn-shenzhen.aliyuncs.com/motu/models/birefnet.onnx",
+    None => "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
 };
 
 /// 编译时可覆盖的默认模型文件名
@@ -61,9 +61,9 @@ pub fn get_model_sources() -> Vec<ModelSource> {
     let default_url = model_download_url();
     vec![
         ModelSource {
-            id: "mocdn".into(),
-            name: "MoCDN".into(),
-            description: "国内 CDN，速度快".into(),
+            id: "modelscope".into(),
+            name: "ModelScope".into(),
+            description: "魔搭社区，国内可直接访问".into(),
             url: default_url.clone(),
             default: true,
         },
@@ -103,8 +103,8 @@ pub struct ModelInfo {
 #[tauri::command]
 pub fn get_model_download_url() -> String {
     let url = model_url();
-    if url.contains("mocdn.mopng.cn") {
-        "MoCDN".to_string()
+    if url.contains("modelscope.cn") {
+        "ModelScope".to_string()
     } else if url.contains("huggingface") {
         "HuggingFace".to_string()
     } else {
@@ -141,7 +141,26 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
     let model_path = model_file_path(&app)?;
     let temp_path = model_path.with_extension("tmp");
 
-    let client = reqwest::Client::new();
+    let mut client_builder = reqwest::Client::builder();
+    if url.contains("modelscope.cn") {
+        client_builder = client_builder
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .default_headers({
+                let mut h = reqwest::header::HeaderMap::new();
+                h.insert(
+                    reqwest::header::REFERER,
+                    reqwest::header::HeaderValue::from_static("https://modelscope.cn/"),
+                );
+                h.insert(
+                    reqwest::header::ACCEPT,
+                    reqwest::header::HeaderValue::from_static("*/*"),
+                );
+                h
+            });
+    }
+    let client = client_builder
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
     let downloaded = if temp_path.exists() {
         fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0)

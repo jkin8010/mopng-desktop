@@ -1,4 +1,4 @@
-use image::{imageops, DynamicImage, ImageBuffer};
+use image::{imageops, DynamicImage};
 use ndarray::{Array2, Array3, Array4};
 use once_cell::sync::Lazy;
 use ort::session::{builder::GraphOptimizationLevel, Session};
@@ -109,28 +109,17 @@ impl BirefnetSessionGuard {
             output_data[h * cols + w]
         });
 
-        // 6. 转换为 u8
-        let alpha_mask = mask_2d.mapv(|x| (x * 255.0).clamp(0.0, 255.0).round() as u8);
+        // Upscale the f32 mask to original dimensions using bilinear interpolation.
+        // Keeping values as f32 during upscaling produces smooth anti-aliased edges;
+        // quantizing to u8 first (like Lanczos3 on u8) creates stair-step artifacts.
+        let upscaled_mask = bilinear_resize_f32(&mask_2d, original_width, original_height);
 
-        // 7. 调整回原始尺寸
-        let alpha_image = DynamicImage::ImageLuma8(
-            ImageBuffer::from_vec(
-                mask_size as u32,
-                mask_size as u32,
-                alpha_mask.into_raw_vec_and_offset().0,
-            )
-            .unwrap_or_default(),
-        );
-
-        let output_image = alpha_image.resize_exact(
-            original_width,
-            original_height,
-            imageops::Lanczos3,
-        );
+        // Convert to u8 only at final resolution
+        let alpha_mask = upscaled_mask.mapv(|x| (x * 255.0).clamp(0.0, 255.0).round() as u8);
 
         let output_array = Array3::from_shape_vec(
             (original_height as usize, original_width as usize, 1_usize),
-            output_image.to_luma8().into_raw(),
+            alpha_mask.into_raw_vec_and_offset().0,
         )?;
 
         Ok(output_array)
@@ -140,6 +129,41 @@ impl BirefnetSessionGuard {
 
 }
 
+/// Bilinear interpolation upscale of a 2D f32 mask.
+fn bilinear_resize_f32(mask: &Array2<f32>, new_width: u32, new_height: u32) -> Array2<f32> {
+    let old_h = mask.nrows();
+    let old_w = mask.ncols();
+    let nw = new_width as usize;
+    let nh = new_height as usize;
+    let mut result = Array2::zeros((nh, nw));
+
+    let scale_x = old_w as f64 / nw as f64;
+    let scale_y = old_h as f64 / nh as f64;
+
+    for y in 0..nh {
+        let src_y = y as f64 * scale_y;
+        let y0 = (src_y.floor() as usize).min(old_h.saturating_sub(1));
+        let y1 = (y0 + 1).min(old_h.saturating_sub(1));
+        let dy = src_y - y0 as f64;
+
+        for x in 0..nw {
+            let src_x = x as f64 * scale_x;
+            let x0 = (src_x.floor() as usize).min(old_w.saturating_sub(1));
+            let x1 = (x0 + 1).min(old_w.saturating_sub(1));
+            let dx = src_x - x0 as f64;
+
+            let v = mask[[y0, x0]] as f64 * (1.0 - dx) * (1.0 - dy)
+                + mask[[y0, x1]] as f64 * dx * (1.0 - dy)
+                + mask[[y1, x0]] as f64 * (1.0 - dx) * dy
+                + mask[[y1, x1]] as f64 * dx * dy;
+
+            result[[y, x]] = v as f32;
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,10 +171,10 @@ mod tests {
 
     #[test]
     fn test_model_loading() {
-        // Model path: ~/Library/Application Support/cn.mopng.desktop/models/birefnet.onnx
+        // Model path: ~/Library/Application Support/cn.mopng.desktop/models/model_fp16.onnx
         let home = std::env::var("HOME").unwrap();
         let model_path = PathBuf::from(format!(
-            "{}/Library/Application Support/cn.mopng.desktop/models/birefnet.onnx",
+            "{}/Library/Application Support/cn.mopng.desktop/models/model_fp16.onnx",
             home
         ));
 
