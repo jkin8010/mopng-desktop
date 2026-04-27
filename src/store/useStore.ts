@@ -13,6 +13,7 @@ interface AppState {
   dragOver: boolean;
   modelStatus: ModelStatus;
   modelDialogOpen: boolean;
+  konvaExportFn: ((mimeType?: string, quality?: number) => string | null) | null;
 
   // Actions
   addTasks: (tasks: MattingTask[]) => void;
@@ -29,6 +30,7 @@ interface AppState {
   clearAll: () => void;
   setModelStatus: (status: Partial<ModelStatus>) => void;
   setModelDialogOpen: (open: boolean) => void;
+  setKonvaExportFn: (fn: ((mimeType?: string, quality?: number) => string | null) | null) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -52,6 +54,7 @@ export const useStore = create<AppState>()(
         speed: 0,
       },
       modelDialogOpen: false,
+      konvaExportFn: null,
 
       addTasks: (newTasks) =>
         set((state) => {
@@ -125,6 +128,8 @@ export const useStore = create<AppState>()(
         })),
 
       setModelDialogOpen: (open) => set({ modelDialogOpen: open }),
+
+      setKonvaExportFn: (fn) => set({ konvaExportFn: fn }),
     }),
     {
       name: "mopng-desktop-store",

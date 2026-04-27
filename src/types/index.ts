@@ -2,7 +2,25 @@ export type MattingMode = "foreground" | "background";
 
 export type OutputFormat = "png" | "jpg" | "webp";
 
-export type BgType = "transparent" | "white" | "color" | "checkerboard";
+export type BgType = "transparent" | "white" | "color" | "checkerboard" | "image" | "gradient";
+
+export type GradientType = "linear" | "radial";
+
+export interface GradientColorStop {
+  offset: number;
+  color: string;
+}
+
+export interface BgGradient {
+  type: GradientType;
+  colorStops: GradientColorStop[];
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  r1?: number;
+  r2?: number;
+}
 
 export interface MattingTask {
   id: string;
@@ -23,6 +41,8 @@ export interface MattingResult {
   format: OutputFormat;
   fileSize: number;
   previewPath?: string;
+  /** Mask image as PNG base64 data URL (grayscale, white=keep, black=remove) */
+  maskDataUrl?: string;
 }
 
 export interface MattingSettings {
@@ -31,6 +51,9 @@ export interface MattingSettings {
   quality: number;
   bgType: BgType;
   bgColor?: string;
+  bgImageUrl?: string;
+  bgGradient?: BgGradient;
+  bgOpacity: number;
   targetWidth?: number;
   targetHeight?: number;
   maintainAspectRatio: boolean;
@@ -62,6 +85,7 @@ export const DEFAULT_SETTINGS: MattingSettings = {
   quality: 95,
   bgType: "transparent",
   bgColor: "#ffffff",
+  bgOpacity: 100,
   maintainAspectRatio: true,
 };
 

@@ -7,6 +7,26 @@ pub fn read_image_file(path: String) -> Result<Vec<u8>, String> {
     std::fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))
 }
 
+/// Read a file and return it as a data URL (data:<mime>;base64,<content>)
+/// This avoids canvas tainting issues when loading images from asset:// protocol
+#[tauri::command]
+pub fn read_file_as_data_url(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    let mime = match std::path::Path::new(&path).extension().and_then(|e| e.to_str()) {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("gif") => "image/gif",
+        _ => "image/png",
+    };
+    let b64 = base64::engine::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &bytes,
+    );
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
 /// 选择多个图片文件（同步命令，内部 async_runtime）
 #[tauri::command]
 pub fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {

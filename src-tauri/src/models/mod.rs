@@ -11,6 +11,8 @@ pub struct MattingSettings {
     pub quality: u32,
     pub bg_type: String,
     pub bg_color: Option<String>,
+    pub bg_image_url: Option<String>,
+    pub bg_opacity: Option<u32>,
     pub target_width: Option<u32>,
     pub target_height: Option<u32>,
     pub maintain_aspect_ratio: bool,
@@ -32,6 +34,7 @@ pub struct ProcessResult {
     pub format: String,
     pub file_size: u64,
     pub preview_path: String,
+    pub mask_data_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

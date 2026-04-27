@@ -30,9 +30,11 @@ fn main() {
             commands::get_model_download_url,
             commands::get_model_dir,
             commands::read_image_file,
+            commands::read_file_as_data_url,
             commands::pick_files,
             commands::get_model_sources,
             commands::select_output_dir,
+            commands::save_data_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

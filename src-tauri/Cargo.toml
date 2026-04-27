@@ -16,7 +16,7 @@ tauri-plugin-fs = "2.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["stream"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "rayon"] }
 ndarray = "0.17"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
 uuid = { version = "1.8", features = ["v4"] }

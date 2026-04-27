@@ -46,6 +46,9 @@ pub async fn process_image(
     .await
     .map_err(|e| format!("Inference thread failed: {}", e))??;
 
+    // Generate mask data URL for frontend real-time compositing
+    let mask_data_url = Some(generate_mask_data_url(&mask)?);
+
     // Apply mask to create the output image
     let output = apply_mask(&img, &mask, &params.settings)?;
 
@@ -67,30 +70,42 @@ pub async fn process_image(
 
     let output_path = output_dir.join(&output_filename);
 
-    // Save the output image
-    let output_format = match ext {
-        "jpg" => ImageFormat::Jpeg,
-        "webp" => ImageFormat::WebP,
-        _ => ImageFormat::Png,
-    };
-
-    // Save output WITHOUT background baked in (transparent for PNG/WebP)
-    // Background type is only applied at export time and for preview
     println!(
-        "[process_image] bg_type={}, bg_color={:?}, output_format={}",
-        params.settings.bg_type, params.settings.bg_color, params.settings.output_format
+        "[process_image] bg_type={}, bg_color={:?}, output_format={}, quality={}",
+        params.settings.bg_type, params.settings.bg_color, params.settings.output_format, params.settings.quality,
     );
-    if ext == "jpg" {
-        // JPG doesn't support alpha, must composite on background
-        let jpg_output = apply_bg_type(&output, &params.settings, "jpg")?;
-        jpg_output
-            .save_with_format(&output_path, output_format)
-            .map_err(|e| format!("Failed to save output: {}", e))?;
-    } else {
-        // Save as transparent RGBA (PNG/WebP)
-        output
-            .save_with_format(&output_path, output_format)
-            .map_err(|e| format!("Failed to save output: {}", e))?;
+
+    // Save with format-specific encoder for quality-controlled compression
+    let file = std::fs::File::create(&output_path)
+        .map_err(|e| format!("Failed to create output file: {}", e))?;
+
+    match ext {
+        "jpg" => {
+            let jpg_output = apply_bg_type(&output, &params.settings, "jpg")?;
+            let quality = params.settings.quality.clamp(10, 100) as u8;
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, quality);
+            jpg_output
+                .write_with_encoder(encoder)
+                .map_err(|e| format!("Failed to save JPEG: {}", e))?;
+        }
+        "webp" => {
+            // WebP lossless (smaller than PNG, ~25-35% better compression)
+            let encoder = image::codecs::webp::WebPEncoder::new_lossless(file);
+            output
+                .write_with_encoder(encoder)
+                .map_err(|e| format!("Failed to save WebP: {}", e))?;
+        }
+        _ => {
+            // PNG: use maximum compression to reduce file size
+            let encoder = image::codecs::png::PngEncoder::new_with_quality(
+                file,
+                image::codecs::png::CompressionType::Best,
+                image::codecs::png::FilterType::Adaptive,
+            );
+            output
+                .write_with_encoder(encoder)
+                .map_err(|e| format!("Failed to save PNG: {}", e))?;
+        }
     }
 
     // Generate transparent preview for canvas display (no background baked in)
@@ -123,6 +138,7 @@ pub async fn process_image(
         format: ext.to_string(),
         file_size,
         preview_path: preview_path.to_string_lossy().to_string(),
+        mask_data_url,
     })
 }
 
@@ -221,6 +237,9 @@ pub async fn export_image_dialog(
 
     let (tx, rx) = tokio::sync::oneshot::channel();
 
+    println!("[export_image_dialog] called, source_path={}", source_path);
+    println!("[export_image_dialog] opening save dialog...");
+
     app.dialog()
         .file()
         .set_file_name(file_name)
@@ -228,10 +247,13 @@ pub async fn export_image_dialog(
         .add_filter("JPEG", &["jpg", "jpeg"])
         .add_filter("WebP", &["webp"])
         .save_file(move |path| {
+            println!("[export_image_dialog] dialog callback received path: {:?}", path);
             let _ = tx.send(path);
         });
 
+    println!("[export_image_dialog] awaiting dialog result...");
     let save_path = rx.await.map_err(|_| "Dialog interrupted".to_string())?;
+    println!("[export_image_dialog] dialog result: {:?}", save_path);
 
     match save_path {
         Some(FilePath::Path(path)) => {
@@ -241,6 +263,74 @@ pub async fn export_image_dialog(
         Some(FilePath::Url(uri)) => {
             Ok(uri.to_string())
         }
+        None => Err("No path selected".to_string()),
+    }
+}
+
+/// Save a data URL (base64-encoded image) to a user-selected location
+#[command]
+pub async fn save_data_url(
+    data_url: String,
+    suggested_name: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    println!("[save_data_url] called, data_url len={}, suggested_name={}", data_url.len(), suggested_name);
+    println!("[save_data_url] data_url prefix: {}", &data_url[..std::cmp::min(80, data_url.len())]);
+
+    // Parse data URL: data:image/<type>;base64,<data>
+    let (mime_type, b64) = data_url
+        .strip_prefix("data:")
+        .and_then(|rest| rest.split_once(";base64,"))
+        .ok_or_else(|| {
+            let preview: String = data_url.chars().take(100).collect();
+            format!("Invalid data URL format. Starts with: {}", preview)
+        })?;
+
+    println!("[save_data_url] mime_type={}, b64_len={}", mime_type, b64.len());
+
+    let bytes = base64::engine::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        b64,
+    )
+    .map_err(|e| format!("Failed to decode base64: {}", e))?;
+
+    println!("[save_data_url] decoded {} bytes", bytes.len());
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    let ext_filter = if mime_type.contains("jpeg") || mime_type.contains("jpg") {
+        ("JPEG", vec!["jpg", "jpeg"])
+    } else if mime_type.contains("webp") {
+        ("WebP", vec!["webp"])
+    } else {
+        ("PNG", vec!["png"])
+    };
+
+    println!("[save_data_url] opening save dialog with filter {:?}", ext_filter.0);
+
+    app.dialog()
+        .file()
+        .set_file_name(suggested_name.clone())
+        .add_filter(ext_filter.0, &ext_filter.1)
+        .save_file(move |path| {
+            println!("[save_data_url] dialog callback received path: {:?}", path);
+            let _ = tx.send(path);
+        });
+
+    println!("[save_data_url] awaiting dialog result...");
+    let save_path = rx.await.map_err(|_| "Dialog interrupted".to_string())?;
+    println!("[save_data_url] dialog result: {:?}", save_path);
+
+    match save_path {
+        Some(tauri_plugin_dialog::FilePath::Path(path)) => {
+            fs::write(&path, &bytes)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+            println!("[save_data_url] written to {}", path.display());
+            Ok(path.to_string_lossy().to_string())
+        }
+        Some(tauri_plugin_dialog::FilePath::Url(uri)) => Ok(uri.to_string()),
         None => Err("No path selected".to_string()),
     }
 }
@@ -379,6 +469,29 @@ fn composite_on_checkerboard(
     }
 
     Ok(image::DynamicImage::ImageRgb8(output))
+}
+
+fn generate_mask_data_url(
+    mask: &ndarray::Array2<f32>,
+) -> Result<String, String> {
+    let (height, width) = (mask.nrows() as u32, mask.ncols() as u32);
+    let mut img_buf = image::GrayImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let v = (mask[[y as usize, x as usize]] * 255.0).clamp(0.0, 255.0) as u8;
+            img_buf.put_pixel(x, y, image::Luma([v]));
+        }
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    let dyn_img = image::DynamicImage::ImageLuma8(img_buf);
+    dyn_img
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode mask PNG: {}", e))?;
+    let b64 = base64::engine::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &bytes,
+    );
+    Ok(format!("data:image/png;base64,{}", b64))
 }
 
 fn create_preview(

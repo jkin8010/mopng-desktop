@@ -10,13 +10,13 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
 const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
     Some(url) => url,
-    None => "https://modelscope.cn/models/onnx-community/BiRefNet-COD-epoch_125/resolve/master/onnx/model_fp16.onnx",
+    None => "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
 };
 
 /// 编译时可覆盖的默认模型文件名
 const DEFAULT_MODEL_FILENAME: &str = match option_env!("MODEL_FILENAME") {
     Some(name) => name,
-    None => "model_fp16.onnx",
+    None => "birefnet.onnx",
 };
 
 /// 运行时环境变量可覆盖模型 URL（用户级自定义）
@@ -141,7 +141,26 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
     let model_path = model_file_path(&app)?;
     let temp_path = model_path.with_extension("tmp");
 
-    let client = reqwest::Client::new();
+    let mut client_builder = reqwest::Client::builder();
+    if url.contains("modelscope.cn") {
+        client_builder = client_builder
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .default_headers({
+                let mut h = reqwest::header::HeaderMap::new();
+                h.insert(
+                    reqwest::header::REFERER,
+                    reqwest::header::HeaderValue::from_static("https://modelscope.cn/"),
+                );
+                h.insert(
+                    reqwest::header::ACCEPT,
+                    reqwest::header::HeaderValue::from_static("*/*"),
+                );
+                h
+            });
+    }
+    let client = client_builder
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
     let downloaded = if temp_path.exists() {
         fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0)
