@@ -5,6 +5,8 @@ export interface KonvaEngineApi {
   resizeStage: (width: number, height: number) => void;
   getNaturalSize: () => { width: number; height: number };
   getDocumentSize: () => { width: number; height: number };
+  setDocumentSize: (width: number, height: number) => void;
+  setMaintainAspectRatio: (v: boolean) => void;
   getViewportScale: () => number;
   getViewportFitScale: () => number;
   setAbsoluteViewportZoom: (zoom: number) => void;

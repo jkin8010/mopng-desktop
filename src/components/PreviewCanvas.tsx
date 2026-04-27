@@ -114,13 +114,24 @@ export function PreviewCanvas({ task }: PreviewCanvasProps) {
           const w = rect.width || 800;
           const h = rect.height || 600;
 
+          const s = useStore.getState().currentSettings;
+          const docSize =
+            s.targetWidth != null && s.targetHeight != null
+              ? { width: s.targetWidth, height: s.targetHeight }
+              : undefined;
+
           const engine = createMattingEngine(host, w, h, mainImg, {
             compareHtml: compareImg,
+            docSize,
+            maintainAspectRatio: s.maintainAspectRatio,
             onViewportChange: (scale, fit) => {
               setZoomPercent(Math.round(scale * 100));
               setFitPercent(Math.round(fit * 100));
             },
-            onDocumentSizeChange: () => {},
+            onDocumentSizeChange: () => {
+              const api = engineRef.current?.api;
+              if (api) applyBackground(api);
+            },
           });
 
           engineRef.current = engine;
@@ -180,6 +191,27 @@ export function PreviewCanvas({ task }: PreviewCanvasProps) {
     currentSettings.bgImageUrl,
     currentSettings.bgGradient,
   ]);
+
+  // Sync document size to engine when size template changes
+  useEffect(() => {
+    const api = engineRef.current?.api;
+    if (!api) return;
+    const tw = currentSettings.targetWidth;
+    const th = currentSettings.targetHeight;
+    if (tw != null && th != null) {
+      api.setDocumentSize(tw, th);
+    } else {
+      const natural = api.getNaturalSize();
+      api.setDocumentSize(natural.width, natural.height);
+    }
+  }, [currentSettings.targetWidth, currentSettings.targetHeight]);
+
+  // Sync maintainAspectRatio to engine
+  useEffect(() => {
+    const api = engineRef.current?.api;
+    if (!api) return;
+    api.setMaintainAspectRatio(currentSettings.maintainAspectRatio);
+  }, [currentSettings.maintainAspectRatio]);
 
   // ResizeObserver for responsive stage sizing
   useEffect(() => {
@@ -314,7 +346,9 @@ export function PreviewCanvas({ task }: PreviewCanvasProps) {
       {/* Document size indicator */}
       {task.result && (
         <div className="absolute top-4 right-4 z-10 text-xs text-muted-foreground bg-background/60 backdrop-blur-sm px-2 py-1 rounded">
-          {task.result.width} x {task.result.height}
+          {currentSettings.targetWidth != null && currentSettings.targetHeight != null
+            ? `${currentSettings.targetWidth} x ${currentSettings.targetHeight}`
+            : `${task.result.width} x ${task.result.height}`}
         </div>
       )}
     </div>

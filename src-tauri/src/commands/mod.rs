@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use image::{ImageReader, ImageFormat};
+use image::{imageops, ImageReader, ImageFormat};
 use image::GenericImageView;
 use tauri::{command, Manager};
 use tauri_plugin_dialog::FilePath;
@@ -36,8 +36,6 @@ pub async fn process_image(
         .decode()
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
-    let (orig_width, orig_height) = (img.width(), img.height());
-
     // Run BiRefNet inference on a blocking thread so the async IPC stays responsive
     let inference_img = img.clone();
     let mask = tokio::task::spawn_blocking(move || {
@@ -51,6 +49,9 @@ pub async fn process_image(
 
     // Apply mask to create the output image
     let output = apply_mask(&img, &mask, &params.settings)?;
+
+    // Resize to target dimensions if specified by size template
+    let output = resize_to_target(output, &params.settings);
 
     // Determine output path and format
     let ext = match params.settings.output_format.as_str() {
@@ -133,8 +134,8 @@ pub async fn process_image(
 
     Ok(ProcessResult {
         output_path: output_path.to_string_lossy().to_string(),
-        width: orig_width,
-        height: orig_height,
+        width: output.width(),
+        height: output.height(),
         format: ext.to_string(),
         file_size,
         preview_path: preview_path.to_string_lossy().to_string(),
@@ -514,6 +515,46 @@ fn create_preview(
     };
 
     Ok(img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3))
+}
+
+/// Resize output to target dimensions when a size template is specified.
+/// When maintain_aspect_ratio is true: scales to fit within target and
+/// centers with transparent padding (letterbox/pillarbox).
+/// When false: directly resizes (may distort).
+/// When no target is set: returns the image unchanged.
+fn resize_to_target(
+    img: image::DynamicImage,
+    settings: &MattingSettings,
+) -> image::DynamicImage {
+    let tw = match settings.target_width {
+        Some(w) if w > 0 => w,
+        _ => return img,
+    };
+    let th = match settings.target_height {
+        Some(h) if h > 0 => h,
+        _ => return img,
+    };
+
+    let (ow, oh) = (img.width(), img.height());
+
+    if !settings.maintain_aspect_ratio {
+        return img.resize_exact(tw, th, image::imageops::FilterType::Lanczos3);
+    }
+
+    // Letterbox/pillarbox: fit within target, pad with transparency
+    let scale = (tw as f64 / ow as f64).min(th as f64 / oh as f64);
+    let scaled_w = (ow as f64 * scale).round() as u32;
+    let scaled_h = (oh as f64 * scale).round() as u32;
+
+    let resized = img.resize_exact(scaled_w, scaled_h, image::imageops::FilterType::Lanczos3);
+
+    let mut output = image::RgbaImage::new(tw, th);
+    let offset_x = ((tw as i64) - (scaled_w as i64)) / 2;
+    let offset_y = ((th as i64) - (scaled_h as i64)) / 2;
+
+    imageops::overlay(&mut output, &resized.to_rgba8(), offset_x, offset_y);
+
+    image::DynamicImage::ImageRgba8(output)
 }
 
 fn parse_color(hex: &str) -> Option<(u8, u8, u8)> {

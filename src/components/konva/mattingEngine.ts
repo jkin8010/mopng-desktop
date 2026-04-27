@@ -97,6 +97,8 @@ export interface MattingEngineOptions {
   onViewportChange?: (scale: number, fit: number) => void;
   onDocumentSizeChange?: (size: { width: number; height: number }) => void;
   compareHtml?: HTMLImageElement | null;
+  docSize?: { width: number; height: number };
+  maintainAspectRatio?: boolean;
 }
 
 export function createMattingEngine(
@@ -112,8 +114,8 @@ export function createMattingEngine(
   const nw = processedHtml.naturalWidth || processedHtml.width;
   const nh = processedHtml.naturalHeight || processedHtml.height;
 
-  let docW = nw;
-  let docH = nh;
+  let docW = options.docSize?.width || nw;
+  let docH = options.docSize?.height || nh;
 
   const stage = new Konva.Stage({ container, width: stageWidth, height: stageHeight });
   const layer = new Konva.Layer();
@@ -186,6 +188,7 @@ export function createMattingEngine(
   let mainGroupX = 0;
   let mainGroupY = 0;
   let compareActive = false;
+  let maintainAspectRatio = options.maintainAspectRatio ?? true;
 
   const fitDoc = () =>
     Math.min(stage.width() / Math.max(1, docW), stage.height() / Math.max(1, docH));
@@ -232,13 +235,24 @@ export function createMattingEngine(
   };
 
   const layoutContainImage = () => {
-    containScale = Math.min(docW / Math.max(1, nw), docH / Math.max(1, nh));
-    const iw = nw * containScale;
-    const ih = nh * containScale;
-    mainGroupX = (docW - iw) / 2;
-    mainGroupY = (docH - ih) / 2;
-    mainGroup.position({ x: mainGroupX, y: mainGroupY });
-    mainGroup.scale({ x: containScale, y: containScale });
+    if (maintainAspectRatio) {
+      containScale = Math.min(docW / Math.max(1, nw), docH / Math.max(1, nh));
+      const iw = nw * containScale;
+      const ih = nh * containScale;
+      mainGroupX = (docW - iw) / 2;
+      mainGroupY = (docH - ih) / 2;
+      mainGroup.position({ x: mainGroupX, y: mainGroupY });
+      mainGroup.scale({ x: containScale, y: containScale });
+    } else {
+      // Stretch to fill: separate x/y scales
+      const sx = docW / Math.max(1, nw);
+      const sy = docH / Math.max(1, nh);
+      containScale = 1; // not meaningful in stretch mode
+      mainGroupX = 0;
+      mainGroupY = 0;
+      mainGroup.position({ x: 0, y: 0 });
+      mainGroup.scale({ x: sx, y: sy });
+    }
 
     if (!compareActive) {
       kImage.visible(true);
@@ -248,11 +262,11 @@ export function createMattingEngine(
       compareImageNode.visible(true);
       const ow = compareImageNode.width();
       const oh = compareImageNode.height();
-      const cs = Math.min(iw / Math.max(1, ow), ih / Math.max(1, oh));
+      const cs = Math.min(docW / Math.max(1, ow), docH / Math.max(1, oh));
       compareImageNode.scale({ x: cs, y: cs });
       compareImageNode.position({
-        x: (iw - ow * cs) / 2,
-        y: (ih - oh * cs) / 2,
+        x: (docW - ow * cs) / 2,
+        y: (docH - oh * cs) / 2,
       });
     }
     layer.batchDraw();
@@ -365,6 +379,27 @@ export function createMattingEngine(
     },
     getNaturalSize: () => ({ width: nw, height: nh }),
     getDocumentSize: () => ({ width: docW, height: docH }),
+    setDocumentSize: (w, h) => {
+      const newW = Math.max(1, w);
+      const newH = Math.max(1, h);
+      if (docW === newW && docH === newH) return;
+      docW = newW;
+      docH = newH;
+      artboard.setAttrs({
+        clipX: 0, clipY: 0,
+        clipWidth: docW, clipHeight: docH,
+      });
+      layoutContainImage();
+      syncTgVisibility();
+      notifyDocSize();
+      centerWorld();
+    },
+    setMaintainAspectRatio: (v) => {
+      if (maintainAspectRatio === v) return;
+      maintainAspectRatio = v;
+      layoutContainImage();
+      layer.batchDraw();
+    },
     getViewportScale: () => worldScale,
     getViewportFitScale: () => fitDoc(),
     setAbsoluteViewportZoom: (z) => {

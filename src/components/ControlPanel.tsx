@@ -1,8 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Play, FolderOpen, Download, Settings, Wrench, ImagePlus } from "lucide-react";
+import { Play, FolderOpen, Download, Settings, Wrench, ImagePlus, Lock, Unlock } from "lucide-react";
 import { useStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -15,7 +15,10 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { GradientAnglePicker, angleToCoords, coordsToAngle } from "@/components/GradientAnglePicker";
-import type { MattingMode, OutputFormat, BgType } from "@/types";
+import { Switch } from "@/components/ui/switch";
+import { ScrubInput } from "@/components/ui/scrub-input";
+import { SIZE_TEMPLATES, deriveTemplateId } from "@/types";
+import type { MattingMode, OutputFormat, BgType, SizeTemplateId } from "@/types";
 
 interface ControlPanelProps {
   onOpenSettings: () => void;
@@ -54,6 +57,30 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
 
   const handleOpacityChange = (value: number[]) => {
     updateSettings({ bgOpacity: value[0] });
+  };
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState<SizeTemplateId>(
+    deriveTemplateId(currentSettings),
+  );
+  const [aspectLocked, setAspectLocked] = useState(true);
+  const aspectRatioRef = useRef(4 / 3);
+
+  const handleTemplateChange = (templateId: string) => {
+    const id = templateId as SizeTemplateId;
+    setSelectedTemplateId(id);
+    if (id === "original") {
+      updateSettings({ targetWidth: undefined, targetHeight: undefined });
+    } else if (id === "custom") {
+      if (currentSettings.targetWidth == null || currentSettings.targetHeight == null) {
+        updateSettings({ targetWidth: 800, targetHeight: 600 });
+      }
+      aspectRatioRef.current = (currentSettings.targetWidth ?? 800) / (currentSettings.targetHeight ?? 600);
+    } else {
+      const tpl = SIZE_TEMPLATES.find((t) => t.id === id);
+      if (tpl) {
+        updateSettings({ targetWidth: tpl.width, targetHeight: tpl.height });
+      }
+    }
   };
 
   const handlePickBgImage = useCallback(async () => {
@@ -412,6 +439,93 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
               />
             </div>
           )}
+
+          {/* Size Template */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground">尺寸模板</label>
+            <Select value={selectedTemplateId} onValueChange={handleTemplateChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SIZE_TEMPLATES.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {selectedTemplateId === "custom" && (
+              <div className="grid items-end gap-1 pt-1" style={{ gridTemplateColumns: "1fr auto 1fr" }}>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">宽度 (px)</label>
+                  <ScrubInput
+                    value={currentSettings.targetWidth ?? 800}
+                    onChange={(v) => {
+                      setSelectedTemplateId("custom");
+                      if (aspectLocked) {
+                        updateSettings({ targetWidth: v, targetHeight: Math.max(1, Math.round(v / aspectRatioRef.current)) });
+                      } else {
+                        aspectRatioRef.current = v / (currentSettings.targetHeight ?? 600);
+                        updateSettings({ targetWidth: v });
+                      }
+                    }}
+                    min={1}
+                    max={10000}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-7 h-8 rounded hover:bg-muted transition-colors text-muted-foreground"
+                  title={aspectLocked ? "解锁宽高比" : "锁定宽高比"}
+                  onClick={() => {
+                    const w = currentSettings.targetWidth ?? 800;
+                    const h = currentSettings.targetHeight ?? 600;
+                    aspectRatioRef.current = w / h;
+                    setAspectLocked(!aspectLocked);
+                  }}
+                >
+                  {aspectLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                </button>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">高度 (px)</label>
+                  <ScrubInput
+                    value={currentSettings.targetHeight ?? 600}
+                    onChange={(v) => {
+                      setSelectedTemplateId("custom");
+                      if (aspectLocked) {
+                        updateSettings({ targetHeight: v, targetWidth: Math.max(1, Math.round(v * aspectRatioRef.current)) });
+                      } else {
+                        aspectRatioRef.current = (currentSettings.targetWidth ?? 800) / v;
+                        updateSettings({ targetHeight: v });
+                      }
+                    }}
+                    min={1}
+                    max={10000}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedTemplateId !== "original" && (
+              <div className="flex items-center gap-2 pt-1">
+                <Switch
+                  id="maintain-ar"
+                  checked={currentSettings.maintainAspectRatio}
+                  onCheckedChange={(v) => updateSettings({ maintainAspectRatio: v })}
+                />
+                <label
+                  htmlFor="maintain-ar"
+                  className="text-xs text-muted-foreground cursor-pointer select-none"
+                >
+                  保持宽高比 (等比缩放居中)
+                </label>
+              </div>
+            )}
+          </div>
 
           {/* Quality */}
           <div className="space-y-3">
