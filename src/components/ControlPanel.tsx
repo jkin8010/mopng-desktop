@@ -320,7 +320,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
                   {availableModels.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
                       {m.name}
-                      {!m.loaded && <span className="ml-2 text-xs text-muted-foreground">(未下载)</span>}
+                      {m.state !== "loaded" && <span className="ml-2 text-xs text-muted-foreground">(未下载)</span>}
                     </SelectItem>
                   ))}
                 </SelectContent>

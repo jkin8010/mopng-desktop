@@ -12,7 +12,7 @@ import { ModelDialog } from "@/components/ModelDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { BatchProgress } from "@/components/BatchProgress";
 import { Loader2 } from "lucide-react";
-import type { MattingTask } from "@/types";
+import type { MattingTask, ModelInfo } from "@/types";
 import { generateId } from "@/lib/id";
 
 function App() {
@@ -29,7 +29,7 @@ function App() {
     const initModels = async () => {
       try {
         // 获取所有可用模型
-        const models: Array<{ id: string; name: string; description: string; loaded: boolean; filename: string; sources: Array<{ id: string; name: string; description: string; url: string; default: boolean }> }> = await invoke("list_models");
+        const models: ModelInfo[] = await invoke("list_models");
         setAvailableModels(models);
 
         const modelId = activeModelId || "birefnet";

@@ -102,6 +102,7 @@ export interface ModelStatus {
   bytesDownloaded: number;
   totalBytes: number;
   speed: number;
+  state: "notDownloaded" | "loading" | "loaded" | "error";
   error?: string;
 }
 
@@ -113,11 +114,25 @@ export interface ModelSource {
   default: boolean;
 }
 
+export interface SourceError {
+  source_id: string;
+  source_name: string;
+  error_type: string;
+  detail: string;
+}
+
+export interface DownloadErrorResponse {
+  message: string;
+  source_errors: SourceError[];
+  model_filename: string;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
   description: string;
-  loaded: boolean;
+  state: "notDownloaded" | "loading" | "loaded" | "error";
+  checksum?: string;
   filename: string;
   sources: ModelSource[];
 }

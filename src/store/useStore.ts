@@ -56,6 +56,7 @@ export const useStore = create<AppState>()(
         bytesDownloaded: 0,
         totalBytes: 0,
         speed: 0,
+        state: "notDownloaded" as const,
       },
       modelDialogOpen: false,
       konvaExportFn: null,
