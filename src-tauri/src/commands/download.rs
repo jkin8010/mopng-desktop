@@ -7,41 +7,6 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 
-/// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
-const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
-    Some(url) => url,
-    None => "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
-};
-
-/// 编译时可覆盖的默认模型文件名
-const DEFAULT_MODEL_FILENAME: &str = match option_env!("MODEL_FILENAME") {
-    Some(name) => name,
-    None => "birefnet.onnx",
-};
-
-/// 运行时环境变量可覆盖模型 URL（用户级自定义）
-fn model_url() -> String {
-    std::env::var("MODEL_URL").unwrap_or_else(|_| DEFAULT_MODEL_URL.to_string())
-}
-
-/// 运行时环境变量可覆盖模型文件名（用户级自定义）
-fn model_filename() -> String {
-    std::env::var("MODEL_FILENAME").unwrap_or_else(|_| DEFAULT_MODEL_FILENAME.to_string())
-}
-
-/// 构建完整下载链接
-fn model_download_url() -> String {
-    let url = model_url();
-    let filename = model_filename();
-    if url.ends_with('/') {
-        format!("{}{}", url, filename)
-    } else if url.ends_with(".onnx") || url.contains("huggingface") {
-        url
-    } else {
-        format!("{}/{}", url, filename)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSource {
     pub id: String,
@@ -51,42 +16,27 @@ pub struct ModelSource {
     pub default: bool,
 }
 
-const HF_RAW_URL: &str = "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx";
-const HF_MIRROR_URL: &str = "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx";
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceError {
+    pub source_id: String,
+    pub source_name: String,
+    pub error_type: String, // "network", "http_404", "checksum_mismatch", "timeout", "http_5xx"
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DownloadErrorResponse {
+    pub message: String,
+    pub source_errors: Vec<SourceError>,
+    pub model_filename: String,
+}
 
 static CANCEL_DOWNLOAD: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 pub fn get_model_sources(model_id: Option<String>) -> Vec<ModelSource> {
     let id = model_id.unwrap_or_else(|| "birefnet".to_string());
-    if let Some(sources) = crate::models::registry::model_sources_for(&id) {
-        return sources;
-    }
-    // Fallback: legacy hardcoded sources
-    let default_url = model_download_url();
-    vec![
-        ModelSource {
-            id: "modelscope".into(),
-            name: "ModelScope".into(),
-            description: "魔搭社区，国内可直接访问".into(),
-            url: default_url.clone(),
-            default: true,
-        },
-        ModelSource {
-            id: "huggingface".into(),
-            name: "HuggingFace".into(),
-            description: "海外源，需科学上网".into(),
-            url: HF_RAW_URL.to_string(),
-            default: false,
-        },
-        ModelSource {
-            id: "hf-mirror".into(),
-            name: "HF Mirror".into(),
-            description: "HuggingFace 国内镜像".into(),
-            url: HF_MIRROR_URL.to_string(),
-            default: false,
-        },
-    ]
+    crate::models::registry::model_sources_for(&id).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,18 +53,6 @@ pub struct ModelInfo {
     pub exists: bool,
     pub path: String,
     pub size_bytes: u64,
-}
-
-#[tauri::command]
-pub fn get_model_download_url() -> String {
-    let url = model_url();
-    if url.contains("modelscope.cn") {
-        "ModelScope".to_string()
-    } else if url.contains("huggingface") {
-        "HuggingFace".to_string()
-    } else {
-        "自动配置".to_string()
-    }
 }
 
 #[tauri::command]
@@ -138,21 +76,87 @@ pub fn check_model(app: AppHandle, model_id: Option<String>) -> Result<ModelInfo
     })
 }
 
-/// 下载模型
+/// 下载模型（仅接受 model_id，不再接受 source_url）
 #[tauri::command]
-pub async fn download_model(app: AppHandle, source_url: Option<String>, model_id: Option<String>) -> Result<String, String> {
-    download_model_inner(app, source_url, model_id).await
+pub async fn download_model(app: AppHandle, model_id: Option<String>) -> Result<String, String> {
+    let id = model_id.unwrap_or_else(|| "birefnet".to_string());
+    download_model_with_fallback(app, &id).await
 }
 
-async fn download_model_inner(app: AppHandle, source_url: Option<String>, model_id: Option<String>) -> Result<String, String> {
+/// 核心回退逻辑：遍历所有下载源直到成功
+async fn download_model_with_fallback(app: AppHandle, model_id: &str) -> Result<String, String> {
     CANCEL_DOWNLOAD.store(false, Ordering::SeqCst);
-    let id = model_id.unwrap_or_else(|| "birefnet".to_string());
-    let url = source_url.unwrap_or_else(model_download_url);
+
     let model_dir = crate::models::registry::model_dir(&app)?;
-    let filename = crate::models::registry::model_filename_for(&id)
-        .unwrap_or_else(|| format!("{}.onnx", id));
+    let filename = crate::models::registry::model_filename_for(model_id)
+        .unwrap_or_else(|| format!("{}.onnx", model_id));
     let model_path = model_dir.join(&filename);
+
+    let sources = crate::models::registry::model_sources_for(model_id).unwrap_or_default();
+
+    // .env 覆盖（per D-05）：MODEL_URL 设为优先源
+    let sources = if let Ok(override_url) = std::env::var("MODEL_URL") {
+        let mut s = vec![ModelSource {
+            id: "env-override".into(),
+            name: "环境变量覆盖".into(),
+            description: "来自 .env MODEL_URL".into(),
+            url: override_url,
+            default: true,
+        }];
+        s.extend(sources);
+        s
+    } else {
+        sources
+    };
+
+    if sources.is_empty() {
+        return Err(format!("模型 {} 没有配置下载源", model_id));
+    }
+
+    let mut source_errors: Vec<SourceError> = Vec::new();
+
+    for source in &sources {
+        log::info!("尝试下载源: {} ({})", source.name, source.url);
+        match download_from_source(&app, &model_path, source, model_id).await {
+            Ok(path) => {
+                let final_size = tokio::fs::metadata(&model_path).await.map(|m| m.len()).unwrap_or(0);
+                let _ = app.emit("model-download-complete", ModelInfo {
+                    exists: true,
+                    path: path.clone(),
+                    size_bytes: final_size,
+                });
+                return Ok(path);
+            }
+            Err(e) => {
+                log::warn!("源 {} 下载失败: {}", source.name, e);
+                source_errors.push(SourceError {
+                    source_id: source.id.clone(),
+                    source_name: source.name.clone(),
+                    error_type: classify_download_error(&e),
+                    detail: e.clone(),
+                });
+            }
+        }
+    }
+
+    let error_response = DownloadErrorResponse {
+        message: format!("模型下载失败：所有 {} 个下载源均不可用", sources.len()),
+        source_errors,
+        model_filename: filename.clone(),
+    };
+    Err(serde_json::to_string(&error_response)
+        .unwrap_or_else(|_| "下载失败，所有源均不可用".to_string()))
+}
+
+/// 从单个源下载模型，包含 SHA256 流式校验和断点续传
+async fn download_from_source(
+    app: &AppHandle,
+    model_path: &std::path::PathBuf,
+    source: &ModelSource,
+    model_id: &str,
+) -> Result<String, String> {
     let temp_path = model_path.with_extension("tmp");
+    let url = &source.url;
 
     let mut client_builder = reqwest::Client::builder();
     if url.contains("modelscope.cn") {
@@ -160,31 +164,20 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>, model_
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .default_headers({
                 let mut h = reqwest::header::HeaderMap::new();
-                h.insert(
-                    reqwest::header::REFERER,
-                    reqwest::header::HeaderValue::from_static("https://modelscope.cn/"),
-                );
-                h.insert(
-                    reqwest::header::ACCEPT,
-                    reqwest::header::HeaderValue::from_static("*/*"),
-                );
+                h.insert(reqwest::header::REFERER, reqwest::header::HeaderValue::from_static("https://modelscope.cn/"));
+                h.insert(reqwest::header::ACCEPT, reqwest::header::HeaderValue::from_static("*/*"));
                 h
             });
     }
-    let client = client_builder
-        .build()
+    let client = client_builder.build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
     let downloaded = if temp_path.exists() {
         tokio::fs::metadata(&temp_path).await.map(|m| m.len()).unwrap_or(0)
-    } else {
-        0
-    };
+    } else { 0 };
 
-    let total_size = match client.head(&url).send().await {
-        Ok(resp) => resp
-            .headers()
-            .get("content-length")
+    let total_size = match client.head(url).send().await {
+        Ok(resp) => resp.headers().get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0),
@@ -192,56 +185,62 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>, model_
     };
 
     if total_size > 0 && downloaded >= total_size {
-        tokio::fs::rename(&temp_path, &model_path).await.map_err(|e| format!("重命名失败: {}", e))?;
-        let _ = app.emit("model-download-complete", ModelInfo {
-            exists: true,
-            path: model_path.to_string_lossy().to_string(),
-            size_bytes: total_size,
-        });
-        return Ok(model_path.to_string_lossy().to_string());
+        if verify_download_checksum(&temp_path, model_id).await {
+            tokio::fs::rename(&temp_path, model_path).await
+                .map_err(|e| format!("重命名失败: {}", e))?;
+            return Ok(model_path.to_string_lossy().to_string());
+        } else {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(format!("[checksum_mismatch] SHA256 校验失败 — 已下载文件与预期不一致"));
+        }
     }
 
-    let mut request = client.get(&url);
+    let mut request = client.get(url);
     if downloaded > 0 {
         request = request.header("Range", format!("bytes={}-", downloaded));
     }
 
-    let mut response = request
-        .send()
-        .await
-        .map_err(|e| format!("下载失败: {}", e))?;
+    let mut response = request.send().await
+        .map_err(|e| format!("下载请求失败: {}", e))?;
 
-    if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-        return Err(format!("服务器返回错误: {}", response.status()));
+    let status = response.status();
+    if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+        let error_type = if status == reqwest::StatusCode::NOT_FOUND { "http_404" }
+            else if status.is_server_error() { "http_5xx" }
+            else { "http_error" };
+        return Err(format!("[{}] 服务器返回 HTTP {}", error_type, status));
     }
 
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&temp_path)
-        .await
-        .map_err(|e| format!("无法创建临时文件: {}", e))?;
-
-    let total_size = if response.headers().contains_key("content-range") {
+    let actual_total = if response.headers().contains_key("content-range") {
         total_size
     } else {
         response.content_length().unwrap_or(total_size)
     };
 
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true).append(true).open(&temp_path).await
+        .map_err(|e| format!("无法创建临时文件: {}", e))?;
+
     let downloaded_ref = Arc::new(AtomicU64::new(downloaded));
     let start_time = std::time::Instant::now();
     let last_emit = Arc::new(AtomicU64::new(downloaded));
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
+    // SHA256 流式累加
+    let mut hasher = Sha256::new();
+    if downloaded > 0 {
+        if let Ok(existing) = tokio::fs::read(&temp_path).await {
+            hasher.update(&existing);
+        }
+    }
+
+    while let Some(chunk) = response.chunk().await
         .map_err(|e| format!("下载中断: {}", e))?
     {
         if CANCEL_DOWNLOAD.load(Ordering::SeqCst) {
             return Err("下载已取消".to_string());
         }
-
         file.write_all(&chunk).await.map_err(|e| format!("写入失败: {}", e))?;
+        hasher.update(&chunk);
 
         let new_downloaded = downloaded_ref.fetch_add(chunk.len() as u64, Ordering::SeqCst) + chunk.len() as u64;
         let last = last_emit.load(Ordering::SeqCst);
@@ -249,46 +248,57 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>, model_
 
         if new_downloaded.saturating_sub(last) >= 524_288 || elapsed >= 0.2 {
             last_emit.store(new_downloaded, Ordering::SeqCst);
-
-            let speed = if elapsed > 0.0 {
-                (new_downloaded as f64 / elapsed) / 1_048_576.0
-            } else {
-                0.0
-            };
-
-            let eta = if speed > 0.0 && total_size > 0 {
-                let remaining = total_size.saturating_sub(new_downloaded) as f64;
-                (remaining / (speed * 1_048_576.0)) as u64
-            } else {
-                0
-            };
-
-            let progress = DownloadProgress {
+            let speed = if elapsed > 0.0 { (new_downloaded as f64 / elapsed) / 1_048_576.0 } else { 0.0 };
+            let eta = if speed > 0.0 && actual_total > 0 {
+                ((actual_total.saturating_sub(new_downloaded) as f64) / (speed * 1_048_576.0)) as u64
+            } else { 0 };
+            let _ = app.emit("model-download-progress", DownloadProgress {
                 bytes_downloaded: new_downloaded,
-                total_bytes: total_size,
-                percentage: if total_size > 0 {
-                    (new_downloaded as f64 / total_size as f64) * 100.0
-                } else {
-                    0.0
-                },
+                total_bytes: actual_total,
+                percentage: if actual_total > 0 { (new_downloaded as f64 / actual_total as f64) * 100.0 } else { 0.0 },
                 speed_mbps: speed,
                 eta_seconds: eta,
-            };
-
-            let _ = app.emit("model-download-progress", progress);
+            });
         }
     }
 
-    tokio::fs::rename(&temp_path, &model_path).await.map_err(|e| format!("重命名失败: {}", e))?;
+    // SHA256 校验
+    let computed_hash = hex::encode(hasher.finalize());
+    if !verify_checksum_against_descriptor(model_id, &computed_hash)? {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("[checksum_mismatch] SHA256 校验失败\n期望: 来自模型描述符\n实际: {}", computed_hash));
+    }
 
-    let final_size = tokio::fs::metadata(&model_path).await.map(|m| m.len()).unwrap_or(0);
-    let _ = app.emit("model-download-complete", ModelInfo {
-        exists: true,
-        path: model_path.to_string_lossy().to_string(),
-        size_bytes: final_size,
-    });
+    tokio::fs::rename(&temp_path, model_path).await
+        .map_err(|e| format!("重命名失败: {}", e))?;
 
     Ok(model_path.to_string_lossy().to_string())
+}
+
+async fn verify_download_checksum(temp_path: &std::path::Path, model_id: &str) -> bool {
+    match compute_file_sha256(temp_path) {
+        Ok(hash) => verify_checksum_against_descriptor(model_id, &hash).unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+fn verify_checksum_against_descriptor(model_id: &str, computed_hash: &str) -> Result<bool, String> {
+    let models = crate::models::registry::list_models();
+    let model = models.iter().find(|m| m.id == model_id)
+        .ok_or_else(|| format!("未知模型: {}", model_id))?;
+    if let Some(ref expected) = model.checksum {
+        Ok(computed_hash == expected)
+    } else {
+        Ok(true) // 无 checksum → 跳过校验
+    }
+}
+
+fn classify_download_error(error: &str) -> String {
+    if error.contains("http_404") || error.contains("404") { "http_404".into() }
+    else if error.contains("timeout") || error.contains("超时") { "timeout".into() }
+    else if error.contains("checksum_mismatch") || error.contains("SHA256") { "checksum_mismatch".into() }
+    else if error.contains("http_5xx") { "http_5xx".into() }
+    else { "network".into() }
 }
 
 #[tauri::command]
