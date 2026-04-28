@@ -40,7 +40,7 @@ impl MattingModel for BirefnetModel {
 
     fn init(&mut self, model_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Disable)?
+            .with_optimization_level(GraphOptimizationLevel::Level1)? // ORT_ENABLE_BASIC: 常量折叠、节点消除等安全优化，不改变模型行为
             .with_intra_threads(1)?
             .commit_from_file(&model_path)?;
         self.session = Some(session);
@@ -150,7 +150,7 @@ pub fn descriptor() -> ModelDescriptor {
         name: "BiRefNet",
         description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）",
         filename: "birefnet.onnx",
-        checksum: None, // TODO: 下载模型后用 shasum -a 256 birefnet.onnx 计算 SHA256 填入此处
+        checksum: Some("58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c"),
         sources: vec![
             ModelSource {
                 id: "modelscope".into(),
