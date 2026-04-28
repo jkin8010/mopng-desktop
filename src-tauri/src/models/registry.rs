@@ -34,37 +34,36 @@ pub struct ModelDescriptor {
     pub checksum: Option<&'static str>,
 }
 
-struct RegistryInner {
-    descriptors: Vec<ModelDescriptor>,
-    loaded: Option<(String, Box<dyn MattingModel>)>,
-}
-
 struct LoadedModel {
     model_id: String,
     model: Box<dyn MattingModel>,
 }
 
-static REGISTRY: Lazy<Mutex<RegistryInner>> = Lazy::new(|| {
-    Mutex::new(RegistryInner {
-        descriptors: vec![crate::models::birefnet::descriptor()],
-        loaded: None,
-    })
+static DESCRIPTORS: Lazy<RwLock<Vec<ModelDescriptor>>> = Lazy::new(|| {
+    RwLock::new(vec![crate::models::birefnet::descriptor()])
+});
+
+static ACTIVE_MODEL: Lazy<Mutex<Option<LoadedModel>>> = Lazy::new(|| {
+    Mutex::new(None)
+});
+
+static MODEL_STATES: Lazy<Mutex<HashMap<String, ModelState>>> = Lazy::new(|| {
+    Mutex::new(HashMap::new())
 });
 
 pub fn list_models() -> Vec<ModelInfo> {
-    let lock = REGISTRY.lock().expect("Registry mutex poisoned");
-    let loaded_id = lock.loaded.as_ref().map(|(id, _)| id.clone());
-    lock.descriptors
+    let descriptors = DESCRIPTORS.read().expect("DESCRIPTORS RwLock poisoned");
+    let states = MODEL_STATES.lock().expect("MODEL_STATES Mutex poisoned");
+    descriptors
         .iter()
         .map(|d| ModelInfo {
             id: d.id.to_string(),
             name: d.name.to_string(),
             description: d.description.to_string(),
-            state: if loaded_id.as_deref() == Some(d.id) {
-                ModelState::Loaded
-            } else {
-                ModelState::NotDownloaded
-            },
+            state: states
+                .get(d.id)
+                .cloned()
+                .unwrap_or(ModelState::NotDownloaded),
             filename: d.filename.to_string(),
             sources: d.sources.clone(),
             checksum: d.checksum.map(|s| s.to_string()),
@@ -72,38 +71,112 @@ pub fn list_models() -> Vec<ModelInfo> {
         .collect()
 }
 
-pub fn init_model(model_id: &str, model_path: PathBuf) -> Result<(), String> {
-    let mut lock = REGISTRY.lock().expect("Registry mutex poisoned");
+pub fn is_model_loaded() -> bool {
+    ACTIVE_MODEL
+        .lock()
+        .expect("ACTIVE_MODEL Mutex poisoned")
+        .is_some()
+}
 
-    let _descriptor = lock
-        .descriptors
+pub fn init_model(model_id: &str, model_path: PathBuf) -> Result<(), String> {
+    // 1. Verify file exists
+    if !model_path.exists() {
+        return Err(format!("模型文件不存在: {:?}", model_path));
+    }
+
+    // 2. Read descriptor
+    let descriptors = DESCRIPTORS.read().expect("DESCRIPTORS RwLock poisoned");
+    let descriptor = descriptors
         .iter()
         .find(|d| d.id == model_id)
         .ok_or_else(|| format!("未知模型: {}", model_id))?;
 
-    let mut model = create_model(model_id)?;
-    model
-        .init(model_path.clone())
-        .map_err(|e| format!("模型初始化失败: {}", e))?;
+    // 3. SHA256 checksum verification
+    if let Some(expected_checksum) = descriptor.checksum {
+        if let Ok(actual) = compute_file_sha256(&model_path) {
+            if actual != expected_checksum {
+                return Err(format!(
+                    "模型文件 SHA256 校验失败\n期望: {}\n实际: {}\n文件可能已损坏，请重新下载",
+                    expected_checksum, actual
+                ));
+            }
+        }
+    }
+    drop(descriptors); // Explicitly release RwLock read guard
 
-    log::info!("模型 {} 已加载: {:?}", model_id, model_path);
-    lock.loaded = Some((model_id.to_string(), model));
+    // 4. Set state to Loading
+    {
+        let mut states = MODEL_STATES
+            .lock()
+            .expect("MODEL_STATES Mutex poisoned");
+        states.insert(model_id.to_string(), ModelState::Loading);
+    }
 
-    Ok(())
-}
+    let model_id_owned = model_id.to_string();
+    let path_clone = model_path.clone();
 
-pub fn is_model_loaded() -> bool {
-    let lock = REGISTRY.lock().expect("Registry mutex poisoned");
-    lock.loaded.is_some()
+    // 5. Spawn OS thread for ONNX session loading with catch_unwind
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut model = create_model(&model_id_owned)?;
+            model
+                .init(path_clone.clone())
+                .map_err(|e| format!("模型初始化失败: {}", e))?;
+            Ok::<Box<dyn MattingModel>, String>(model)
+        }));
+
+        let mut states = MODEL_STATES
+            .lock()
+            .expect("MODEL_STATES Mutex poisoned");
+        let mut active = ACTIVE_MODEL
+            .lock()
+            .expect("ACTIVE_MODEL Mutex poisoned");
+
+        match result {
+            Ok(Ok(model)) => {
+                states.insert(model_id_owned.clone(), ModelState::Loaded);
+                active.replace(LoadedModel {
+                    model_id: model_id_owned.clone(),
+                    model,
+                });
+                log::info!("Model {} loaded successfully", model_id_owned);
+            }
+            Ok(Err(e)) => {
+                states.insert(
+                    model_id_owned.clone(),
+                    ModelState::Error(format!("模型加载失败: {}", e)),
+                );
+                log::error!("Model {} init failed: {}", model_id_owned, e);
+            }
+            Err(panic_err) => {
+                let msg = if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else {
+                    "Unknown panic during model initialization".to_string()
+                };
+                states.insert(
+                    model_id_owned.clone(),
+                    ModelState::Error(format!("模型加载崩溃: {}", msg)),
+                );
+                log::error!("Model {} init panicked: {}", model_id_owned, msg);
+            }
+        }
+    });
+
+    Ok(()) // Return immediately — frontend polls list_models() to observe ModelState::Loading
 }
 
 pub fn infer(image: DynamicImage) -> Result<Array3<u8>, String> {
-    let mut lock = REGISTRY.lock().expect("Registry mutex poisoned");
-    let (_id, model) = lock
-        .loaded
+    let mut lock = ACTIVE_MODEL
+        .lock()
+        .expect("ACTIVE_MODEL Mutex poisoned");
+    let loaded = lock
         .as_mut()
-        .ok_or("模型未初始化，请先加载模型")?;
-    model
+        .ok_or_else(|| "模型未初始化，请先加载模型".to_string())?;
+    loaded
+        .model
         .infer(image)
         .map_err(|e| format!("推理失败: {}", e))
 }
@@ -119,16 +192,20 @@ pub fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn model_filename_for(model_id: &str) -> Option<String> {
-    let lock = REGISTRY.lock().expect("Registry mutex poisoned");
-    lock.descriptors
+    let descriptors = DESCRIPTORS
+        .read()
+        .expect("DESCRIPTORS RwLock poisoned");
+    descriptors
         .iter()
         .find(|d| d.id == model_id)
         .map(|d| d.filename.to_string())
 }
 
 pub fn model_sources_for(model_id: &str) -> Option<Vec<ModelSource>> {
-    let lock = REGISTRY.lock().expect("Registry mutex poisoned");
-    lock.descriptors
+    let descriptors = DESCRIPTORS
+        .read()
+        .expect("DESCRIPTORS RwLock poisoned");
+    descriptors
         .iter()
         .find(|d| d.id == model_id)
         .map(|d| d.sources.clone())
@@ -139,4 +216,22 @@ fn create_model(id: &str) -> Result<Box<dyn MattingModel>, String> {
         "birefnet" => Ok(Box::new(crate::models::birefnet::BirefnetModel::new())),
         _ => Err(format!("不支持的模型: {}", id)),
     }
+}
+
+/// Compute SHA256 checksum of a file.
+/// Returns Ok(hex_string) on success, or Err if sha2 crate not yet available.
+/// Plan A-02 will add sha2 to Cargo.toml and this will compute real checksums.
+fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
+    let _ = path;
+    Err("sha2 not yet available".to_string())
+    // Plan A-02: replace with:
+    // let mut file = std::fs::File::open(path).map_err(|e| format!("无法打开文件: {}", e))?;
+    // let mut hasher = sha2::Sha256::new();
+    // let mut buffer = [0u8; 8192];
+    // loop {
+    //     let n = file.read(&mut buffer).map_err(|e| format!("读取文件失败: {}", e))?;
+    //     if n == 0 { break; }
+    //     hasher.update(&buffer[..n]);
+    // }
+    // Ok(format!("{:x}", hasher.finalize()))
 }
