@@ -9,6 +9,14 @@ use crate::commands::ModelSource;
 pub mod birefnet;
 pub mod registry;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ModelState {
+    NotDownloaded,
+    Loading,
+    Loaded,
+    Error(String),
+}
+
 /// Plugin protocol for matting models.
 pub trait MattingModel: Send + Sync {
     fn id(&self) -> &str;

@@ -150,6 +150,7 @@ pub fn descriptor() -> ModelDescriptor {
         name: "BiRefNet",
         description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）",
         filename: "birefnet.onnx",
+        checksum: None, // TODO: 下载模型后用 shasum -a 256 birefnet.onnx 计算 SHA256 填入此处
         sources: vec![
             ModelSource {
                 id: "modelscope".into(),

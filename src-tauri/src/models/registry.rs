@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::RwLock;
 
 use image::DynamicImage;
 use ndarray::Array3;
@@ -10,15 +12,17 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::ModelSource;
 use crate::models::MattingModel;
+use crate::models::ModelState;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub loaded: bool,
+    pub state: ModelState,
     pub filename: String,
     pub sources: Vec<ModelSource>,
+    pub checksum: Option<String>,
 }
 
 pub struct ModelDescriptor {
@@ -27,11 +31,17 @@ pub struct ModelDescriptor {
     pub description: &'static str,
     pub filename: &'static str,
     pub sources: Vec<ModelSource>,
+    pub checksum: Option<&'static str>,
 }
 
 struct RegistryInner {
     descriptors: Vec<ModelDescriptor>,
     loaded: Option<(String, Box<dyn MattingModel>)>,
+}
+
+struct LoadedModel {
+    model_id: String,
+    model: Box<dyn MattingModel>,
 }
 
 static REGISTRY: Lazy<Mutex<RegistryInner>> = Lazy::new(|| {
@@ -50,9 +60,14 @@ pub fn list_models() -> Vec<ModelInfo> {
             id: d.id.to_string(),
             name: d.name.to_string(),
             description: d.description.to_string(),
-            loaded: loaded_id.as_deref() == Some(d.id),
+            state: if loaded_id.as_deref() == Some(d.id) {
+                ModelState::Loaded
+            } else {
+                ModelState::NotDownloaded
+            },
             filename: d.filename.to_string(),
             sources: d.sources.clone(),
+            checksum: d.checksum.map(|s| s.to_string()),
         })
         .collect()
 }
