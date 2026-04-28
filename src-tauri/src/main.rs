@@ -24,6 +24,7 @@ fn main() {
             commands::export_image_dialog,
             models::init_model,
             models::is_model_loaded,
+            models::list_models,
             commands::check_model,
             commands::download_model,
             commands::cancel_download,

@@ -1,11 +1,10 @@
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
+use tokio::io::AsyncWriteExt;
 
 /// 编译时可覆盖的默认模型 URL（优先从编译环境变量读取，否则用 CDN 默认值）
 const DEFAULT_MODEL_URL: &str = match option_env!("MODEL_URL") {
@@ -57,7 +56,12 @@ const HF_MIRROR_URL: &str = "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/
 static CANCEL_DOWNLOAD: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
-pub fn get_model_sources() -> Vec<ModelSource> {
+pub fn get_model_sources(model_id: Option<String>) -> Vec<ModelSource> {
+    let id = model_id.unwrap_or_else(|| "birefnet".to_string());
+    if let Some(sources) = crate::models::registry::model_sources_for(&id) {
+        return sources;
+    }
+    // Fallback: legacy hardcoded sources
     let default_url = model_download_url();
     vec![
         ModelSource {
@@ -113,8 +117,12 @@ pub fn get_model_download_url() -> String {
 }
 
 #[tauri::command]
-pub fn check_model(app: AppHandle) -> Result<ModelInfo, String> {
-    let path = model_file_path(&app)?;
+pub fn check_model(app: AppHandle, model_id: Option<String>) -> Result<ModelInfo, String> {
+    let id = model_id.unwrap_or_else(|| "birefnet".to_string());
+    let model_dir = crate::models::registry::model_dir(&app)?;
+    let filename = crate::models::registry::model_filename_for(&id)
+        .unwrap_or_else(|| format!("{}.onnx", id));
+    let path = model_dir.join(&filename);
     let exists = path.exists();
     let size = if exists {
         fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
@@ -131,14 +139,18 @@ pub fn check_model(app: AppHandle) -> Result<ModelInfo, String> {
 
 /// 下载模型
 #[tauri::command]
-pub async fn download_model(app: AppHandle, source_url: Option<String>) -> Result<String, String> {
-    download_model_inner(app, source_url).await
+pub async fn download_model(app: AppHandle, source_url: Option<String>, model_id: Option<String>) -> Result<String, String> {
+    download_model_inner(app, source_url, model_id).await
 }
 
-async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Result<String, String> {
+async fn download_model_inner(app: AppHandle, source_url: Option<String>, model_id: Option<String>) -> Result<String, String> {
     CANCEL_DOWNLOAD.store(false, Ordering::SeqCst);
+    let id = model_id.unwrap_or_else(|| "birefnet".to_string());
     let url = source_url.unwrap_or_else(model_download_url);
-    let model_path = model_file_path(&app)?;
+    let model_dir = crate::models::registry::model_dir(&app)?;
+    let filename = crate::models::registry::model_filename_for(&id)
+        .unwrap_or_else(|| format!("{}.onnx", id));
+    let model_path = model_dir.join(&filename);
     let temp_path = model_path.with_extension("tmp");
 
     let mut client_builder = reqwest::Client::builder();
@@ -163,7 +175,7 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
     let downloaded = if temp_path.exists() {
-        fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0)
+        tokio::fs::metadata(&temp_path).await.map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };
@@ -179,7 +191,7 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
     };
 
     if total_size > 0 && downloaded >= total_size {
-        fs::rename(&temp_path, &model_path).map_err(|e| format!("重命名失败: {}", e))?;
+        tokio::fs::rename(&temp_path, &model_path).await.map_err(|e| format!("重命名失败: {}", e))?;
         let _ = app.emit("model-download-complete", ModelInfo {
             exists: true,
             path: model_path.to_string_lossy().to_string(),
@@ -202,10 +214,11 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
         return Err(format!("服务器返回错误: {}", response.status()));
     }
 
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&temp_path)
+        .await
         .map_err(|e| format!("无法创建临时文件: {}", e))?;
 
     let total_size = if response.headers().contains_key("content-range") {
@@ -227,7 +240,7 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
             return Err("下载已取消".to_string());
         }
 
-        file.write_all(&chunk).map_err(|e| format!("写入失败: {}", e))?;
+        file.write_all(&chunk).await.map_err(|e| format!("写入失败: {}", e))?;
 
         let new_downloaded = downloaded_ref.fetch_add(chunk.len() as u64, Ordering::SeqCst) + chunk.len() as u64;
         let last = last_emit.load(Ordering::SeqCst);
@@ -265,9 +278,9 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
         }
     }
 
-    fs::rename(&temp_path, &model_path).map_err(|e| format!("重命名失败: {}", e))?;
+    tokio::fs::rename(&temp_path, &model_path).await.map_err(|e| format!("重命名失败: {}", e))?;
 
-    let final_size = fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0);
+    let final_size = tokio::fs::metadata(&model_path).await.map(|m| m.len()).unwrap_or(0);
     let _ = app.emit("model-download-complete", ModelInfo {
         exists: true,
         path: model_path.to_string_lossy().to_string(),
@@ -278,9 +291,13 @@ async fn download_model_inner(app: AppHandle, source_url: Option<String>) -> Res
 }
 
 #[tauri::command]
-pub fn cancel_download(app: AppHandle) -> Result<(), String> {
+pub fn cancel_download(app: AppHandle, model_id: Option<String>) -> Result<(), String> {
     CANCEL_DOWNLOAD.store(true, Ordering::SeqCst);
-    let model_path = model_file_path(&app)?;
+    let id = model_id.unwrap_or_else(|| "birefnet".to_string());
+    let model_dir = crate::models::registry::model_dir(&app)?;
+    let filename = crate::models::registry::model_filename_for(&id)
+        .unwrap_or_else(|| format!("{}.onnx", id));
+    let model_path = model_dir.join(&filename);
     let temp_path = model_path.with_extension("tmp");
     if temp_path.exists() {
         let _ = fs::remove_file(&temp_path);
@@ -290,21 +307,6 @@ pub fn cancel_download(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_model_dir(app: AppHandle) -> Result<String, String> {
-    let dir = model_dir(&app)?;
+    let dir = crate::models::registry::model_dir(&app)?;
     Ok(dir.to_string_lossy().to_string())
-}
-
-fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("models");
-    fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    Ok(path)
-}
-
-fn model_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = model_dir(app)?;
-    Ok(dir.join(model_filename()))
 }

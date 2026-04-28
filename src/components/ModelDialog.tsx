@@ -11,7 +11,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useStore } from "@/store";
-import { AlertCircle, Download, CheckCircle, XCircle, Loader2, Globe } from "lucide-react";
+import { AlertCircle, Download, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import type { ModelSource } from "@/types";
 
 const MODEL_SIZE_MB = 900;
 
@@ -48,19 +49,15 @@ function formatETA(seconds: number): string {
   return `${h}小时${m}分`;
 }
 
-interface ModelSource {
-  id: string;
-  name: string;
-  description: string;
-  url: string;
-  default: boolean;
-}
-
 export function ModelDialog() {
-  const { modelStatus, setModelStatus, setModelDialogOpen, modelDialogOpen } = useStore();
+  const { modelStatus, setModelStatus, setModelDialogOpen, modelDialogOpen, activeModelId, availableModels } = useStore();
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const [sources, setSources] = useState<ModelSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState<string>("mocdn");
+
+  const activeModel = availableModels.find((m) => m.id === activeModelId);
+  const modelDisplayName = activeModel?.name ?? "AI 模型";
+  const modelFilename = activeModel?.filename ?? "model.onnx";
 
   // Listen for download progress events
   useEffect(() => {
@@ -91,7 +88,7 @@ export function ModelDialog() {
           if (!mounted) return;
           const { exists, path, size_bytes } = event.payload;
           // 加载模型到内存
-          invoke("init_model", { modelPath: path, provider: "coreml" }).catch(
+          invoke("init_model", { modelId: activeModelId, modelPath: path }).catch(
             (e) => console.warn("初始化模型失败:", e)
           );
           setModelStatus({
@@ -118,7 +115,7 @@ export function ModelDialog() {
 
   // 加载可用下载源
   useEffect(() => {
-    invoke<ModelSource[]>("get_model_sources").then((srcs) => {
+    invoke<ModelSource[]>("get_model_sources", { modelId: activeModelId }).then((srcs) => {
       setSources(srcs);
       const def = srcs.find((s) => s.default);
       if (def) setSelectedSourceId(def.id);
@@ -140,11 +137,11 @@ export function ModelDialog() {
         progress: 0,
       });
 
-      const path = await invoke<string>("download_model", { sourceUrl: url });
+      const path = await invoke<string>("download_model", { sourceUrl: url, modelId: activeModelId });
 
       // 加载模型到内存
       try {
-        await invoke("init_model", { modelPath: path, provider: "coreml" });
+        await invoke("init_model", { modelId: activeModelId, modelPath: path });
       } catch (initErr: any) {
         setModelStatus({
           ...useStore.getState().modelStatus,
@@ -182,7 +179,7 @@ export function ModelDialog() {
 
   const handleCancel = useCallback(async () => {
     try {
-      await invoke("cancel_download", {});
+      await invoke("cancel_download", { modelId: activeModelId });
     } catch {
       // ignore
     }
@@ -221,8 +218,8 @@ export function ModelDialog() {
           </DialogTitle>
           <DialogDescription>
             {modelStatus.exists
-              ? "BiRefNet 模型已就绪，可以开始使用"
-              : `首次使用需要下载 BiRefNet 模型（约 ${MODEL_SIZE_MB} MB）`}
+              ? `${modelDisplayName} 模型已就绪，可以开始使用`
+              : `首次使用需要下载 ${modelDisplayName} 模型（约 ${MODEL_SIZE_MB} MB）`}
           </DialogDescription>
         </DialogHeader>
 
@@ -239,7 +236,7 @@ export function ModelDialog() {
               <div className="bg-muted rounded-lg p-4 text-sm space-y-2">
                 <div className="flex items-center gap-2">
                   <Download className="w-4 h-4" />
-                  <span>模型: birefnet.onnx (FP32)</span>
+                  <span>模型: {modelFilename} (FP32)</span>
                 </div>
                 <div className="text-muted-foreground">
                   大小: ~{MODEL_SIZE_MB} MB

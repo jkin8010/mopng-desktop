@@ -36,13 +36,21 @@ pub async fn process_image(
         .decode()
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
-    // Run BiRefNet inference on a blocking thread so the async IPC stays responsive
+    // Run inference on a blocking thread so the async IPC stays responsive
     let inference_img = img.clone();
-    let mask = tokio::task::spawn_blocking(move || {
-        run_birefnet_inference(inference_img)
+    let mask_u8 = tokio::task::spawn_blocking(move || {
+        crate::models::registry::infer(inference_img)
     })
     .await
     .map_err(|e| format!("Inference thread failed: {}", e))??;
+
+    // Convert Array3<u8> (H, W, 1) to Array2<f32> for downstream compositing
+    let (h, w, _) = mask_u8.dim();
+    let mask = mask_u8
+        .remove_axis(ndarray::Axis(2))
+        .mapv(|v| v as f32 / 255.0);
+
+    println!("[Inference] Inference complete, mask shape: {}x{}", h, w);
 
     // Generate mask data URL for frontend real-time compositing
     let mask_data_url = Some(generate_mask_data_url(&mask)?);
@@ -334,34 +342,6 @@ pub async fn save_data_url(
         Some(tauri_plugin_dialog::FilePath::Url(uri)) => Ok(uri.to_string()),
         None => Err("No path selected".to_string()),
     }
-}
-
-// Internal helper functions
-
-fn run_birefnet_inference(
-    img: image::DynamicImage,
-) -> Result<ndarray::Array2<f32>, String> {
-    println!(
-        "[Inference] Starting BiRefNet inference for {}x{} image",
-        img.width(),
-        img.height()
-    );
-
-    let guard = crate::models::birefnet::BirefnetSession::get()
-        .ok_or("模型未初始化，请先加载模型")?;
-
-    let output = guard
-        .run(img)
-        .map_err(|e| format!("推理失败: {}", e))?;
-
-    // output: Array3<u8> with shape (height, width, 1)
-    let (h, w, _) = output.dim();
-    let mask = output
-        .remove_axis(ndarray::Axis(2))
-        .mapv(|v| v as f32 / 255.0);
-
-    println!("[Inference] Inference complete, mask shape: {}x{}", h, w);
-    Ok(mask)
 }
 
 fn apply_mask(

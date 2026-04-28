@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { MattingTask, MattingSettings, AppSettings, ModelStatus } from "@/types";
+import type { MattingTask, MattingSettings, AppSettings, ModelStatus, ModelInfo } from "@/types";
 import { DEFAULT_APP_SETTINGS } from "@/types";
 
 interface AppState {
@@ -14,6 +14,8 @@ interface AppState {
   modelStatus: ModelStatus;
   modelDialogOpen: boolean;
   konvaExportFn: ((mimeType?: string, quality?: number) => string | null) | null;
+  availableModels: ModelInfo[];
+  activeModelId: string;
 
   // Actions
   addTasks: (tasks: MattingTask[]) => void;
@@ -31,6 +33,8 @@ interface AppState {
   setModelStatus: (status: Partial<ModelStatus>) => void;
   setModelDialogOpen: (open: boolean) => void;
   setKonvaExportFn: (fn: ((mimeType?: string, quality?: number) => string | null) | null) => void;
+  setAvailableModels: (models: ModelInfo[]) => void;
+  setActiveModelId: (id: string) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -55,6 +59,8 @@ export const useStore = create<AppState>()(
       },
       modelDialogOpen: false,
       konvaExportFn: null,
+      availableModels: [],
+      activeModelId: "birefnet",
 
       addTasks: (newTasks) =>
         set((state) => {
@@ -130,12 +136,17 @@ export const useStore = create<AppState>()(
       setModelDialogOpen: (open) => set({ modelDialogOpen: open }),
 
       setKonvaExportFn: (fn) => set({ konvaExportFn: fn }),
+
+      setAvailableModels: (models) => set({ availableModels: models }),
+
+      setActiveModelId: (id) => set({ activeModelId: id }),
     }),
     {
       name: "mopng-desktop-store",
       partialize: (state) => ({
         appSettings: state.appSettings,
         currentSettings: state.currentSettings,
+        activeModelId: state.activeModelId,
       }),
     }
   )

@@ -18,23 +18,33 @@ import { generateId } from "@/lib/id";
 function App() {
   const { tasks, selectedTaskId, addTasks, selectTask, updateTask, dragOver, setDragOver } =
     useStore();
-  const { modelStatus, setModelStatus, setModelDialogOpen } = useStore();
+  const { modelStatus, setModelStatus, setModelDialogOpen, availableModels, activeModelId, setAvailableModels, setActiveModelId } = useStore();
   const [initialized, setInitialized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
-  // 启动时检查模型
+  // 启动时加载模型列表并检查模型
   useEffect(() => {
-    const checkModel = async () => {
+    const initModels = async () => {
       try {
-        const info: { exists: boolean; path: string; size_bytes: number } = await invoke("check_model", {});
+        // 获取所有可用模型
+        const models: Array<{ id: string; name: string; description: string; loaded: boolean; filename: string; sources: Array<{ id: string; name: string; description: string; url: string; default: boolean }> }> = await invoke("list_models");
+        setAvailableModels(models);
+
+        const modelId = activeModelId || "birefnet";
+        if (!activeModelId) {
+          setActiveModelId("birefnet");
+        }
+
+        // 检查当前选中的模型是否存在
+        const info: { exists: boolean; path: string; size_bytes: number } = await invoke("check_model", { modelId });
         if (info.exists) {
           setModelStatus({ exists: true, path: info.path, size: info.size_bytes, downloading: false, progress: 100 });
 
           // 自动将模型加载到内存
           try {
-            await invoke("init_model", { modelPath: info.path, provider: "coreml" });
+            await invoke("init_model", { modelId, modelPath: info.path });
           } catch (initErr) {
             console.warn("模型加载到内存失败:", initErr);
           }
@@ -49,7 +59,7 @@ function App() {
         setInitialized(true);
       }
     };
-    checkModel();
+    initModels();
   }, []);
 
   // 将本地文件路径转换为 Tauri asset URL

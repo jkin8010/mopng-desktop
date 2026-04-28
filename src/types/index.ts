@@ -105,6 +105,23 @@ export interface ModelStatus {
   error?: string;
 }
 
+export interface ModelSource {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  default: boolean;
+}
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  loaded: boolean;
+  filename: string;
+  sources: ModelSource[];
+}
+
 export const DEFAULT_SETTINGS: MattingSettings = {
   mode: "foreground",
   outputFormat: "png",

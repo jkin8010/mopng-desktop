@@ -30,10 +30,13 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     selectedTaskId,
     currentSettings,
     isProcessing,
+    availableModels,
+    activeModelId,
     updateSettings,
     updateTask,
     updateTaskResult,
     selectTask,
+    setActiveModelId,
     setProcessing,
   } = useStore();
 
@@ -305,6 +308,26 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
         </div>
 
         <div className="p-4 space-y-5">
+          {/* Model Selector */}
+          {availableModels.length > 1 && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">AI 模型</label>
+              <Select value={activeModelId} onValueChange={setActiveModelId}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                      {!m.loaded && <span className="ml-2 text-xs text-muted-foreground">(未下载)</span>}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {/* Mode */}
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground">抠图模式</label>

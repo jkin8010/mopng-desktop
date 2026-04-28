@@ -1,7 +1,27 @@
-pub mod birefnet;
-
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use image::DynamicImage;
+use ndarray::Array3;
+use serde::{Deserialize, Serialize};
+
+use crate::commands::ModelSource;
+
+pub mod birefnet;
+pub mod registry;
+
+/// Plugin protocol for matting models.
+pub trait MattingModel: Send + Sync {
+    fn id(&self) -> &str;
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn init(&mut self, model_path: PathBuf) -> Result<(), Box<dyn std::error::Error>>;
+    fn is_loaded(&self) -> bool;
+    fn infer(&mut self, image: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>>;
+    fn filename(&self) -> &str;
+    fn sources(&self) -> Vec<ModelSource> {
+        vec![]
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,27 +63,30 @@ pub struct ThumbnailParams {
     pub max_size: u32,
 }
 
-/// 初始化模型（由前端在确认模型存在后调用）
 #[tauri::command]
-pub fn init_model(model_path: String, _provider: Option<String>) -> Result<(), String> {
-    let path = PathBuf::from(model_path);
+pub fn init_model(model_id: String, model_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&model_path);
     if !path.exists() {
-        return Err(format!("模型文件不存在: {:?}", path));
+        return Err(format!("模型文件不存在: {}", model_path));
     }
-
     log::info!("开始加载模型到内存...");
     log::info!("模型路径: {:?}", path);
-    log::info!("模型大小: {} MB", path.metadata().ok().map(|m| m.len() / 1_048_576).unwrap_or(0));
-
-    let result = birefnet::BirefnetSession::init(path)
-        .map_err(|e| format!("模型初始化失败: {}", e));
-
-    log::info!("BiRefNet 模型初始化{:?}", result.as_ref().map(|_| "成功").unwrap_or(&"失败"));
-    result
+    log::info!(
+        "模型大小: {} MB",
+        path.metadata()
+            .ok()
+            .map(|m| m.len() / 1_048_576)
+            .unwrap_or(0)
+    );
+    registry::init_model(&model_id, path)
 }
 
-/// 检查模型是否已加载到内存
 #[tauri::command]
 pub fn is_model_loaded() -> bool {
-    birefnet::BirefnetSession::get().is_some()
+    registry::is_model_loaded()
+}
+
+#[tauri::command]
+pub fn list_models() -> Vec<registry::ModelInfo> {
+    registry::list_models()
 }
