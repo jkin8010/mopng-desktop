@@ -1,6 +1,6 @@
 [package]
 name = "mopng-desktop"
-version = "0.3.0"
+version = "0.4.0"
 description = "MoPNG Desktop - AI Image Matting Tool"
 authors = ["jkin8010"]
 edition = "2021"
