@@ -28,7 +28,6 @@ fn main() {
             commands::check_model,
             commands::download_model,
             commands::cancel_download,
-            commands::get_model_download_url,
             commands::get_model_dir,
             commands::read_image_file,
             commands::read_file_as_data_url,
