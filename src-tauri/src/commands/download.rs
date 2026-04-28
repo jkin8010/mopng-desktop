@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 
@@ -309,4 +310,20 @@ pub fn cancel_download(app: AppHandle, model_id: Option<String>) -> Result<(), S
 pub fn get_model_dir(app: AppHandle) -> Result<String, String> {
     let dir = crate::models::registry::model_dir(&app)?;
     Ok(dir.to_string_lossy().to_string())
+}
+
+/// 使用流式读取（8KB 缓冲区）计算文件 SHA256，返回十六进制字符串
+pub(crate) fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("无法打开文件进行 SHA256 校验: {}", e))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buffer)
+            .map_err(|e| format!("读取文件失败: {}", e))?;
+        if n == 0 { break; }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
 }

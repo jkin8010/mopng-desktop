@@ -218,20 +218,6 @@ fn create_model(id: &str) -> Result<Box<dyn MattingModel>, String> {
     }
 }
 
-/// Compute SHA256 checksum of a file.
-/// Returns Ok(hex_string) on success, or Err if sha2 crate not yet available.
-/// Plan A-02 will add sha2 to Cargo.toml and this will compute real checksums.
 fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
-    let _ = path;
-    Err("sha2 not yet available".to_string())
-    // Plan A-02: replace with:
-    // let mut file = std::fs::File::open(path).map_err(|e| format!("无法打开文件: {}", e))?;
-    // let mut hasher = sha2::Sha256::new();
-    // let mut buffer = [0u8; 8192];
-    // loop {
-    //     let n = file.read(&mut buffer).map_err(|e| format!("读取文件失败: {}", e))?;
-    //     if n == 0 { break; }
-    //     hasher.update(&buffer[..n]);
-    // }
-    // Ok(format!("{:x}", hasher.finalize()))
+    crate::commands::download::compute_file_sha256(path)
 }
