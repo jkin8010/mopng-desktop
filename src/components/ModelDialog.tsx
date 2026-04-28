@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useStore } from "@/store";
 import { AlertCircle, Download, CheckCircle, XCircle, Loader2 } from "lucide-react";
-import type { ModelSource } from "@/types";
+import type { ModelSource, DownloadErrorResponse, SourceError } from "@/types";
 
 const MODEL_SIZE_MB = 900;
 
@@ -53,7 +53,9 @@ export function ModelDialog() {
   const { modelStatus, setModelStatus, setModelDialogOpen, modelDialogOpen, activeModelId, availableModels } = useStore();
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const [sources, setSources] = useState<ModelSource[]>([]);
-  const [selectedSourceId, setSelectedSourceId] = useState<string>("mocdn");
+  const [manualUrl, setManualUrl] = useState<string>("");
+  const [showManualUrl, setShowManualUrl] = useState<boolean>(false);
+  const [downloadErrors, setDownloadErrors] = useState<SourceError[]>([]);
 
   const activeModel = availableModels.find((m) => m.id === activeModelId);
   const modelDisplayName = activeModel?.name ?? "AI 模型";
@@ -113,22 +115,16 @@ export function ModelDialog() {
     };
   }, [setModelStatus]);
 
-  // 加载可用下载源
+  // 加载可用下载源（仅作信息展示，后端自动回退遍历）
   useEffect(() => {
     invoke<ModelSource[]>("get_model_sources", { modelId: activeModelId }).then((srcs) => {
       setSources(srcs);
-      const def = srcs.find((s) => s.default);
-      if (def) setSelectedSourceId(def.id);
     }).catch(() => {
-      // ignore - fallback to manual selection
+      // ignore
     });
   }, []);
 
   const handleDownload = useCallback(async () => {
-    const src = sources.find((s) => s.id === selectedSourceId);
-    const url = src?.url;
-    if (!url) return;
-
     try {
       setModelStatus({
         ...useStore.getState().modelStatus,
@@ -137,20 +133,10 @@ export function ModelDialog() {
         progress: 0,
       });
 
-      const path = await invoke<string>("download_model", { sourceUrl: url, modelId: activeModelId });
+      // 后端自动回退遍历所有源，前端仅传 modelId
+      const path = await invoke<string>("download_model", { modelId: activeModelId });
 
-      // 加载模型到内存
-      try {
-        await invoke("init_model", { modelId: activeModelId, modelPath: path });
-      } catch (initErr: any) {
-        setModelStatus({
-          ...useStore.getState().modelStatus,
-          downloading: false,
-          error: `模型初始化失败: ${initErr?.message || initErr}`,
-        });
-        return;
-      }
-
+      // 下载完成，状态由 model-download-complete 事件更新
       setModelStatus({
         ...useStore.getState().modelStatus,
         exists: true,
@@ -168,14 +154,41 @@ export function ModelDialog() {
           downloading: false,
         });
       } else {
+        // 尝试解析 DownloadErrorResponse JSON
+        let displayError = msg || "下载失败";
+        try {
+          const parsed: DownloadErrorResponse = JSON.parse(msg);
+          if (parsed.source_errors?.length > 0) {
+            setDownloadErrors(parsed.source_errors);
+            displayError = parsed.message;
+          }
+        } catch {
+          // 非 JSON 错误，直接使用原始消息
+        }
         setModelStatus({
           ...useStore.getState().modelStatus,
           downloading: false,
-          error: msg || "下载失败",
+          error: displayError,
         });
       }
     }
-  }, [setModelStatus, sources, selectedSourceId]);
+  }, [setModelStatus, activeModelId]);
+
+  const handleRetry = useCallback(() => {
+    setDownloadErrors([]);
+    setModelStatus({ ...useStore.getState().modelStatus, error: undefined });
+    handleDownload();
+  }, [handleDownload, setModelStatus]);
+
+  const handleManualUrlDownload = useCallback(async () => {
+    if (!manualUrl.trim()) return;
+    setModelStatus({
+      ...useStore.getState().modelStatus,
+      error: `请在 .env 文件中添加 MODEL_URL=${manualUrl} 后重试下载`,
+    });
+    setManualUrl("");
+    setShowManualUrl(false);
+  }, [manualUrl, setModelStatus]);
 
   const handleCancel = useCallback(async () => {
     try {
@@ -243,36 +256,15 @@ export function ModelDialog() {
                 </div>
               </div>
 
-              {/* 源选择 */}
+              {/* 下载源列表（信息展示，后端自动回退遍历） */}
               {sources.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">选择下载源</label>
-                  <div className="grid gap-2">
-                    {sources.map((src) => (
-                      <button
-                        key={src.id}
-                        onClick={() => setSelectedSourceId(src.id)}
-                        className={`flex items-start gap-3 rounded-lg border p-3 text-left text-sm transition-colors ${
-                          selectedSourceId === src.id
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:bg-muted"
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          checked={selectedSourceId === src.id}
-                          onChange={() => setSelectedSourceId(src.id)}
-                          className="mt-0.5"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium">{src.name}</div>
-                          <div className="text-muted-foreground truncate">
-                            {src.description}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">下载源（自动回退）:</div>
+                  {sources.map((src) => (
+                    <div key={src.id} className="text-xs bg-muted/50 rounded px-2 py-1">
+                      {src.name}{src.default ? " (默认)" : ""}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -334,9 +326,54 @@ export function ModelDialog() {
           )}
 
           {modelStatus.error && (
-            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
-              <XCircle className="w-4 h-4 shrink-0" />
-              <span>{modelStatus.error}</span>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
+                <XCircle className="w-4 h-4 shrink-0" />
+                <span>{modelStatus.error}</span>
+              </div>
+
+              {downloadErrors.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">各下载源错误详情：</p>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {downloadErrors.map((se, i) => (
+                      <div key={i} className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1">
+                        <span className="font-medium">{se.source_name}</span>
+                        <span className="mx-1">—</span>
+                        <span className="text-destructive">{se.error_type}</span>
+                        {se.detail && <span>: {se.detail}</span>}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button onClick={handleRetry} variant="outline" size="sm" className="flex-1">
+                      重试
+                    </Button>
+                    <Button
+                      onClick={() => setShowManualUrl(!showManualUrl)}
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                    >
+                      手动输入 URL
+                    </Button>
+                  </div>
+                  {showManualUrl && (
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={manualUrl}
+                        onChange={(e) => setManualUrl(e.target.value)}
+                        placeholder="https://..."
+                        className="flex-1 rounded border px-2 py-1 text-sm bg-background"
+                      />
+                      <Button onClick={handleManualUrlDownload} size="sm" disabled={!manualUrl.trim()}>
+                        下载
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
