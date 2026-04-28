@@ -40,16 +40,15 @@ function App() {
         // 检查当前选中的模型是否存在
         const info: { exists: boolean; path: string; size_bytes: number } = await invoke("check_model", { modelId });
         if (info.exists) {
-          setModelStatus({ exists: true, path: info.path, size: info.size_bytes, downloading: false, progress: 100 });
+          // 设置初始状态为 loading — 轮询会检测 loaded 状态
+          setModelStatus({ exists: true, path: info.path, size: info.size_bytes, downloading: false, progress: 100, state: "loading" });
 
-          // 自动将模型加载到内存
-          try {
-            await invoke("init_model", { modelId, modelPath: info.path });
-          } catch (initErr) {
+          // 非阻塞加载模型到内存（fire-and-forget）
+          invoke("init_model", { modelId, modelPath: info.path }).catch((initErr) => {
             console.warn("模型加载到内存失败:", initErr);
-          }
+          });
         } else {
-          setModelStatus({ exists: false, downloading: false });
+          setModelStatus({ exists: false, downloading: false, state: "notDownloaded" });
           setModelDialogOpen(true);
         }
       } catch (err) {
@@ -61,6 +60,28 @@ function App() {
     };
     initModels();
   }, []);
+
+  // 轮询 list_models() 监控模型异步加载状态
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const models: ModelInfo[] = await invoke("list_models");
+        setAvailableModels(models);
+        const currentModel = models.find((m) => m.id === activeModelId);
+        if (currentModel?.state === "loaded") {
+          setModelStatus({ exists: true, downloading: false, progress: 100, state: "loaded" });
+          if (useStore.getState().modelDialogOpen) {
+            setModelDialogOpen(false);
+          }
+        } else if (currentModel?.state === "error") {
+          console.warn("模型加载失败:", currentModel);
+        }
+      } catch {
+        // 轮询失败静默处理
+      }
+    }, 500);
+    return () => clearInterval(pollInterval);
+  }, [activeModelId]);
 
   // 将本地文件路径转换为 Tauri asset URL
   const toAssetUrl = useCallback((path: string): string => {
