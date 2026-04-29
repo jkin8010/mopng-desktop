@@ -1,0 +1,43 @@
+{
+  "id": "birefnet",
+  "name": "BiRefNet",
+  "description": "通用高精度抠图模型，支持各类主体（人物、物体、动物等）",
+  "filename": "birefnet.onnx",
+  "checksum": "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+  "inputSize": 1024,
+  "mean": [0.485, 0.456, 0.406],
+  "std": [0.229, 0.224, 0.225],
+  "sources": [
+    {
+      "id": "modelscope",
+      "name": "ModelScope",
+      "description": "魔搭社区，国内可直接访问",
+      "url": "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
+      "default": true
+    },
+    {
+      "id": "huggingface",
+      "name": "HuggingFace",
+      "description": "海外源，需科学上网",
+      "url": "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
+      "default": false
+    },
+    {
+      "id": "hf-mirror",
+      "name": "HF Mirror",
+      "description": "HuggingFace 国内镜像",
+      "url": "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
+      "default": false
+    }
+  ],
+  "param_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "capabilities": {
+    "matting": true,
+    "backgroundReplace": false,
+    "edgeRefinement": false,
+    "uncertaintyMask": false
+  }
+}
