@@ -23,15 +23,25 @@ pub struct ModelInfo {
     pub filename: String,
     pub sources: Vec<ModelSource>,
     pub checksum: Option<String>,
+    pub param_schema: serde_json::Value,
+    pub capabilities: crate::models::PluginCapabilities,
+    pub input_size: Option<u32>,
+    pub mean: Option<Vec<f32>>,
+    pub std: Option<Vec<f32>>,
 }
 
 pub struct ModelDescriptor {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub filename: &'static str,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub filename: String,
     pub sources: Vec<ModelSource>,
-    pub checksum: Option<&'static str>,
+    pub checksum: Option<String>,
+    pub param_schema: serde_json::Value,
+    pub capabilities: crate::models::PluginCapabilities,
+    pub input_size: Option<u32>,
+    pub mean: Option<Vec<f32>>,
+    pub std: Option<Vec<f32>>,
 }
 
 struct LoadedModel {
@@ -57,16 +67,21 @@ pub fn list_models() -> Vec<ModelInfo> {
     descriptors
         .iter()
         .map(|d| ModelInfo {
-            id: d.id.to_string(),
-            name: d.name.to_string(),
-            description: d.description.to_string(),
+            id: d.id.clone(),
+            name: d.name.clone(),
+            description: d.description.clone(),
             state: states
-                .get(d.id)
+                .get(&d.id)
                 .cloned()
                 .unwrap_or(ModelState::NotDownloaded),
-            filename: d.filename.to_string(),
+            filename: d.filename.clone(),
             sources: d.sources.clone(),
-            checksum: d.checksum.map(|s| s.to_string()),
+            checksum: d.checksum.clone(),
+            param_schema: d.param_schema.clone(),
+            capabilities: d.capabilities,
+            input_size: d.input_size,
+            mean: d.mean.clone(),
+            std: d.std.clone(),
         })
         .collect()
 }
@@ -92,9 +107,9 @@ pub fn init_model(model_id: &str, model_path: PathBuf) -> Result<(), String> {
         .ok_or_else(|| format!("未知模型: {}", model_id))?;
 
     // 3. SHA256 checksum verification
-    if let Some(expected_checksum) = descriptor.checksum {
+    if let Some(ref expected_checksum) = descriptor.checksum {
         if let Ok(actual) = compute_file_sha256(&model_path) {
-            if actual != expected_checksum {
+            if actual != *expected_checksum {
                 return Err(format!(
                     "模型文件 SHA256 校验失败\n期望: {}\n实际: {}\n文件可能已损坏，请重新下载",
                     expected_checksum, actual

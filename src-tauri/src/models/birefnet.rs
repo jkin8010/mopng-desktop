@@ -4,6 +4,7 @@ use ort::session::{builder::GraphOptimizationLevel, Session};
 use std::path::PathBuf;
 
 use crate::commands::ModelSource;
+use crate::models::PluginCapabilities;
 use crate::models::registry::ModelDescriptor;
 use crate::models::MattingModel;
 
@@ -142,15 +143,38 @@ impl MattingModel for BirefnetModel {
             },
         ]
     }
+
+    // Task 1 stubs — real implementations in Task 2
+    fn preprocess(&self, _image: DynamicImage) -> Result<ort::value::Tensor<f32>, Box<dyn std::error::Error>> {
+        Err("not implemented".into())
+    }
+
+    fn postprocess(
+        &self,
+        _tensor: ort::value::Tensor<f32>,
+        _original_dims: (u32, u32),
+    ) -> Result<ndarray::Array3<u8>, Box<dyn std::error::Error>> {
+        Err("not implemented".into())
+    }
 }
 
 pub fn descriptor() -> ModelDescriptor {
     ModelDescriptor {
-        id: "birefnet",
-        name: "BiRefNet",
-        description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）",
-        filename: "birefnet.onnx",
-        checksum: Some("58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c"),
+        id: "birefnet".to_string(),
+        name: "BiRefNet".to_string(),
+        description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）".to_string(),
+        filename: "birefnet.onnx".to_string(),
+        checksum: Some("58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c".to_string()),
+        param_schema: serde_json::json!({}),
+        capabilities: PluginCapabilities {
+            matting: true,
+            background_replace: false,
+            edge_refinement: false,
+            uncertainty_mask: false,
+        },
+        input_size: None,
+        mean: None,
+        std: None,
         sources: vec![
             ModelSource {
                 id: "modelscope".into(),
