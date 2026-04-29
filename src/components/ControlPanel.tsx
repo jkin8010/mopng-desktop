@@ -254,7 +254,9 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
   const handleExport = useCallback(async () => {
     if (!selectedTask?.result?.outputPath) return;
     const state = useStore.getState();
-    const isTransparent = state.currentSettings.bgType === "transparent";
+    const bgType = state.currentSettings.bgType;
+    const isTransparent = bgType === "transparent";
+    const isGradient = bgType === "gradient";
     const exportFn = state.konvaExportFn;
 
     console.log("[export] bgType=", state.currentSettings.bgType, "exportFn=", !!exportFn);
@@ -266,7 +268,31 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
           sourcePath: selectedTask.result.outputPath,
         });
         console.log("[export] export_image_dialog result:", result);
+      } else if (isGradient && exportFn) {
+        console.log("[export] gradient bg: using Konva export path");
+        const ext = state.currentSettings.outputFormat;
+        const suggestedName = selectedTask.fileName.replace(/\.[^.]+$/, "") + "_matting." + ext;
+        const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        const quality = ext === "png" ? undefined : 95;
+        let dataUrl: string;
+        try {
+          dataUrl = exportFn(mimeType, quality) || "";
+        } catch (fnErr) {
+          console.error("[export] Konva exportFn threw:", fnErr);
+          return;
+        }
+        console.log("[export] gradient dataUrl length:", dataUrl.length);
+        if (!dataUrl) {
+          console.warn("[export] empty dataUrl from Konva export (gradient)");
+          return;
+        }
+        const result = await invoke<string>("save_data_url", {
+          dataUrl,
+          suggestedName,
+        });
+        console.log("[export] gradient saved to:", result);
       } else {
+        // Non-gradient, non-transparent: existing Konva export path
         const ext = state.currentSettings.outputFormat;
         const suggestedName = selectedTask.fileName.replace(/\.[^.]+$/, "") + "_matting." + ext;
         const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
