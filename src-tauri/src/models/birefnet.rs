@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use crate::commands::ModelSource;
 use crate::models::PluginCapabilities;
-use crate::models::registry::ModelDescriptor;
 use crate::models::MattingModel;
 
 pub struct BirefnetModel {
@@ -52,66 +51,34 @@ impl MattingModel for BirefnetModel {
         self.session.is_some()
     }
 
+    /// Refactored to delegate to preprocess() and postprocess(). Per D-03.
     fn infer(&mut self, original_image: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
-        let session = self.session.as_mut().ok_or("Session not initialized")?;
+        // Take ownership of session to avoid borrow conflicts with preprocess/postprocess
+        let mut session = self.session.take().ok_or("Session not initialized")?;
 
-        let mask_size = self.input_size as usize;
         let original_width = original_image.width();
         let original_height = original_image.height();
 
         log::info!("原始图片尺寸: {}x{}", original_width, original_height);
 
-        // 1. Resize image
-        let resized_img = original_image.resize_exact(
-            mask_size as u32,
-            mask_size as u32,
-            imageops::Lanczos3,
-        );
+        let input_tensor = self.preprocess(original_image)?;
 
-        // 2. Convert to RGB and normalize (NCHW)
-        let rgb_img = resized_img.to_rgb8();
-        let mut input_data = Vec::with_capacity(mask_size * mask_size * 3);
+        // Scoped block: extract output data and drop SessionOutputs borrow before reassigning session
+        let (output_shape, output_data_vec) = {
+            let mut outputs = session.run(ort::inputs!["input_image" => input_tensor])?;
+            let output_value = outputs.remove("output_image").ok_or("Missing output_image in model output")?;
+            let (shape_ref, data_ref) = output_value.try_extract_tensor::<f32>()?;
+            (shape_ref.clone(), data_ref.to_vec())
+        };
 
-        for c in 0..3 {
-            for y in 0..mask_size {
-                for x in 0..mask_size {
-                    let pixel = rgb_img.get_pixel(x as u32, y as u32);
-                    let normalized = (pixel[c] as f32 / 255.0 - self.mean[c]) / self.std[c];
-                    input_data.push(normalized);
-                }
-            }
-        }
+        // Reconstruct as Tensor<f32> for postprocess trait API
+        let flat_shape: Vec<usize> = output_shape.iter().map(|&d| d as usize).collect();
+        let output_array = ndarray::ArrayD::from_shape_vec(flat_shape, output_data_vec)?;
+        let output_tensor = ort::value::Tensor::from_array(output_array)?;
 
-        // 3. Build input tensor [1, 3, 1024, 1024] (NCHW)
-        let input_array = Array4::from_shape_vec((1, 3, mask_size, mask_size), input_data)?;
-
-        // 4. Run inference (ort)
-        let input_tensor = ort::value::Tensor::from_array(input_array)?;
-        let outputs = session.run(ort::inputs!["input_image" => input_tensor])?;
-
-        // 5. Extract output
-        let (output_shape, output_data) = outputs["output_image"].try_extract_tensor::<f32>()?;
-        let output_dims = &**output_shape;
-        log::info!("输出形状: {:?}", output_dims);
-
-        let cols = *output_dims.last().unwrap_or(&(mask_size as i64)) as usize;
-
-        let mask_2d = Array2::from_shape_fn((mask_size, mask_size), |(h, w)| {
-            output_data[h * cols + w]
-        });
-
-        // Upscale the f32 mask to original dimensions using bilinear interpolation
-        let upscaled_mask = bilinear_resize_f32(&mask_2d, original_width, original_height);
-
-        // Convert to u8 at final resolution
-        let alpha_mask = upscaled_mask.mapv(|x| (x * 255.0).clamp(0.0, 255.0).round() as u8);
-
-        let output_array = Array3::from_shape_vec(
-            (original_height as usize, original_width as usize, 1_usize),
-            alpha_mask.into_raw_vec_and_offset().0,
-        )?;
-
-        Ok(output_array)
+        // Restore session before calling postprocess (which borrows self)
+        self.session = Some(session);
+        self.postprocess(output_tensor, (original_width, original_height))
     }
 
     fn filename(&self) -> &str {
@@ -144,60 +111,80 @@ impl MattingModel for BirefnetModel {
         ]
     }
 
-    // Task 1 stubs — real implementations in Task 2
-    fn preprocess(&self, _image: DynamicImage) -> Result<ort::value::Tensor<f32>, Box<dyn std::error::Error>> {
-        Err("not implemented".into())
+    /// BiRefNet has no tunable inference parameters. Per D-01.
+    fn param_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })
     }
 
-    fn postprocess(
-        &self,
-        _tensor: ort::value::Tensor<f32>,
-        _original_dims: (u32, u32),
-    ) -> Result<ndarray::Array3<u8>, Box<dyn std::error::Error>> {
-        Err("not implemented".into())
-    }
-}
-
-pub fn descriptor() -> ModelDescriptor {
-    ModelDescriptor {
-        id: "birefnet".to_string(),
-        name: "BiRefNet".to_string(),
-        description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）".to_string(),
-        filename: "birefnet.onnx".to_string(),
-        checksum: Some("58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c".to_string()),
-        param_schema: serde_json::json!({}),
-        capabilities: PluginCapabilities {
+    /// BiRefNet supports core matting (outputs transparent PNG) only. Per D-02.
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities {
             matting: true,
             background_replace: false,
             edge_refinement: false,
             uncertainty_mask: false,
-        },
-        input_size: None,
-        mean: None,
-        std: None,
-        sources: vec![
-            ModelSource {
-                id: "modelscope".into(),
-                name: "ModelScope".into(),
-                description: "魔搭社区，国内可直接访问".into(),
-                url: "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
-                default: true,
-            },
-            ModelSource {
-                id: "huggingface".into(),
-                name: "HuggingFace".into(),
-                description: "海外源，需科学上网".into(),
-                url: "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
-                default: false,
-            },
-            ModelSource {
-                id: "hf-mirror".into(),
-                name: "HF Mirror".into(),
-                description: "HuggingFace 国内镜像".into(),
-                url: "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
-                default: false,
-            },
-        ],
+        }
+    }
+
+    /// Preprocess: resize to input_size, RGB conversion, ImageNet normalization, NCHW tensor.
+    /// Per D-03.
+    fn preprocess(&self, image: DynamicImage) -> Result<ort::value::Tensor<f32>, Box<dyn std::error::Error>> {
+        let mask_size = self.input_size as usize;
+
+        let resized_img = image.resize_exact(
+            self.input_size,
+            self.input_size,
+            imageops::Lanczos3,
+        );
+
+        let rgb_img = resized_img.to_rgb8();
+        let mut input_data = Vec::with_capacity(mask_size * mask_size * 3);
+
+        for c in 0..3 {
+            for y in 0..mask_size {
+                for x in 0..mask_size {
+                    let pixel = rgb_img.get_pixel(x as u32, y as u32);
+                    let normalized = (pixel[c] as f32 / 255.0 - self.mean[c]) / self.std[c];
+                    input_data.push(normalized);
+                }
+            }
+        }
+
+        let input_array = Array4::from_shape_vec((1, 3, mask_size, mask_size), input_data)?;
+        Ok(ort::value::Tensor::from_array(input_array)?)
+    }
+
+    /// Postprocess: extract f32 tensor, reshape to 2D mask, bilinear upscale, convert to u8.
+    /// Per D-03.
+    fn postprocess(
+        &self,
+        tensor: ort::value::Tensor<f32>,
+        original_dims: (u32, u32),
+    ) -> Result<ndarray::Array3<u8>, Box<dyn std::error::Error>> {
+        let mask_size = self.input_size as usize;
+        let (original_width, original_height) = original_dims;
+
+        let (output_shape, output_data) = tensor.try_extract_tensor::<f32>()?;
+        let output_dims = &**output_shape;
+        let cols = *output_dims.last().unwrap_or(&(mask_size as i64)) as usize;
+
+        let mask_2d = Array2::from_shape_fn((mask_size, mask_size), |(h, w)| {
+            output_data[h * cols + w]
+        });
+
+        let upscaled_mask = bilinear_resize_f32(&mask_2d, original_width, original_height);
+
+        let alpha_mask = upscaled_mask.mapv(|x| (x * 255.0).clamp(0.0, 255.0).round() as u8);
+
+        let output_array = ndarray::Array3::from_shape_vec(
+            (original_height as usize, original_width as usize, 1_usize),
+            alpha_mask.into_raw_vec_and_offset().0,
+        )?;
+
+        Ok(output_array)
     }
 }
 
@@ -241,6 +228,85 @@ mod tests {
     use super::*;
     use image::RgbaImage;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_param_schema_returns_empty_json_schema() {
+        let model = BirefnetModel::new();
+        let schema = model.param_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_capabilities_returns_matting_true_only() {
+        let model = BirefnetModel::new();
+        let caps = model.capabilities();
+        assert!(caps.matting);
+        assert!(!caps.background_replace);
+        assert!(!caps.edge_refinement);
+        assert!(!caps.uncertainty_mask);
+    }
+
+    #[test]
+    fn test_preprocess_output_shape() {
+        let model = BirefnetModel::new();
+        // Create a 256x256 test image
+        let test_img = RgbaImage::from_fn(256, 256, |x, y| {
+            let v = ((x + y) * 2 % 256) as u8;
+            image::Rgba([v, v, v, 255])
+        });
+        let dyn_img = DynamicImage::ImageRgba8(test_img);
+
+        let tensor = model.preprocess(dyn_img).expect("preprocess should succeed");
+        // Verify NCHW shape: [1, 3, 1024, 1024]
+        let (shape, _data) = tensor.try_extract_tensor::<f32>().expect("should extract tensor");
+        assert_eq!(&**shape, &[1i64, 3, 1024, 1024],
+            "Expected NCHW shape [1, 3, 1024, 1024], got {:?}", &**shape);
+    }
+
+    #[test]
+    fn test_postprocess_output_shape() {
+        let model = BirefnetModel::new();
+        // Create a synthetic 1024x1024 mask tensor (all 0.5 values)
+        let mask_data: Vec<f32> = vec![0.5f32; 1024 * 1024];
+        let mask_array = ndarray::Array4::from_shape_vec((1, 1, 1024, 1024), mask_data)
+            .expect("Failed to create test array");
+        let tensor = ort::value::Tensor::from_array(mask_array)
+            .expect("Failed to create test tensor");
+
+        let result = model.postprocess(tensor, (256, 256))
+            .expect("postprocess should succeed");
+        // Expected shape: [256, 256, 1]
+        assert_eq!(result.shape(), &[256, 256, 1],
+            "Expected shape [256, 256, 1], got {:?}", result.shape());
+    }
+
+    #[test]
+    fn test_preprocess_values_in_normalized_range() {
+        let model = BirefnetModel::new();
+        // Create a solid gray 128x128 image (R=128, G=128, B=128)
+        let test_img = RgbaImage::from_fn(128, 128, |_, _| {
+            image::Rgba([128, 128, 128, 255])
+        });
+        let dyn_img = DynamicImage::ImageRgba8(test_img);
+
+        let tensor = model.preprocess(dyn_img).expect("preprocess should succeed");
+
+        // Extract first pixel's normalized values
+        let data = tensor.try_extract_tensor::<f32>().expect("should extract f32 data");
+        let flat = data.1;
+        // R channel: (128/255 - 0.485) / 0.229 ≈ (0.502 - 0.485) / 0.229 ≈ 0.074
+        // G channel: (128/255 - 0.456) / 0.224 ≈ (0.502 - 0.456) / 0.224 ≈ 0.205
+        // B channel: (128/255 - 0.406) / 0.225 ≈ (0.502 - 0.406) / 0.225 ≈ 0.427
+        let r = flat[0]; // NCHW: first channel, first pixel
+        let g = flat[1024 * 1024]; // second channel, first pixel
+        let b = flat[2 * 1024 * 1024]; // third channel, first pixel
+
+        // All values should be in normalized range (roughly -2.0 to 2.0 for ImageNet)
+        assert!((-3.0..3.0).contains(&r), "R channel value {} out of expected range", r);
+        assert!((-3.0..3.0).contains(&g), "G channel value {} out of expected range", g);
+        assert!((-3.0..3.0).contains(&b), "B channel value {} out of expected range", b);
+    }
 
     #[test]
     fn test_model_loading() {

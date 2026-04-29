@@ -50,7 +50,50 @@ struct LoadedModel {
 }
 
 static DESCRIPTORS: Lazy<RwLock<Vec<ModelDescriptor>>> = Lazy::new(|| {
-    RwLock::new(vec![crate::models::birefnet::descriptor()])
+    // Temporary hardcoded descriptor — will be replaced by file-system scanning (D-18/D-19)
+    RwLock::new(vec![ModelDescriptor {
+        id: "birefnet".to_string(),
+        name: "BiRefNet".to_string(),
+        description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）".to_string(),
+        filename: "birefnet.onnx".to_string(),
+        checksum: Some("58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c".to_string()),
+        param_schema: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+        capabilities: crate::models::PluginCapabilities {
+            matting: true,
+            background_replace: false,
+            edge_refinement: false,
+            uncertainty_mask: false,
+        },
+        input_size: Some(1024),
+        mean: Some(vec![0.485, 0.456, 0.406]),
+        std: Some(vec![0.229, 0.224, 0.225]),
+        sources: vec![
+            ModelSource {
+                id: "modelscope".into(),
+                name: "ModelScope".into(),
+                description: "魔搭社区，国内可直接访问".into(),
+                url: "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
+                default: true,
+            },
+            ModelSource {
+                id: "huggingface".into(),
+                name: "HuggingFace".into(),
+                description: "海外源，需科学上网".into(),
+                url: "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
+                default: false,
+            },
+            ModelSource {
+                id: "hf-mirror".into(),
+                name: "HF Mirror".into(),
+                description: "HuggingFace 国内镜像".into(),
+                url: "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
+                default: false,
+            },
+        ],
+    }])
 });
 
 static ACTIVE_MODEL: Lazy<Mutex<Option<LoadedModel>>> = Lazy::new(|| {
