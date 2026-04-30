@@ -14,8 +14,6 @@ import { useStore } from "@/store";
 import { AlertCircle, Download, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import type { ModelSource, DownloadErrorResponse, SourceError } from "@/types";
 
-const MODEL_SIZE_MB = 900;
-
 interface DownloadProgressEvent {
   bytes_downloaded: number;
   total_bytes: number;
@@ -227,12 +225,12 @@ export function ModelDialog() {
             ) : (
               <AlertCircle className="w-5 h-5 text-amber-500" />
             )}
-            {modelStatus.exists ? "模型就绪" : "需要下载 AI 模型"}
+            {modelStatus.exists ? `${modelDisplayName} 已就绪` : `需要下载 ${modelDisplayName}`}
           </DialogTitle>
           <DialogDescription>
             {modelStatus.exists
               ? `${modelDisplayName} 模型已就绪，可以开始使用`
-              : `首次使用需要下载 ${modelDisplayName} 模型（约 ${MODEL_SIZE_MB} MB）`}
+              : `首次使用需要下载 ${modelDisplayName} 模型`}
           </DialogDescription>
         </DialogHeader>
 
@@ -249,10 +247,10 @@ export function ModelDialog() {
               <div className="bg-muted rounded-lg p-4 text-sm space-y-2">
                 <div className="flex items-center gap-2">
                   <Download className="w-4 h-4" />
-                  <span>模型: {modelFilename} (FP32)</span>
+                  <span>模型: {modelFilename}</span>
                 </div>
                 <div className="text-muted-foreground">
-                  大小: ~{MODEL_SIZE_MB} MB
+                  模型大小将在开始下载后显示
                 </div>
               </div>
 
