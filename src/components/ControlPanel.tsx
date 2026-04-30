@@ -173,6 +173,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
   })();
 
   const handleModelChange = useCallback(async (newModelId: string) => {
+    useStore.getState().setModelSwitchingError(null);
     setActiveModelId(newModelId);
     useStore.getState().setModelSwitching(true);
     try {

@@ -221,13 +221,15 @@ pub(crate) fn switch_model_with_dir(model_id: &str, model_dir: &Path) -> Result<
         states.insert(model_id_owned.clone(), ModelState::Loading);
     }
 
-    // 4. Drop old model (releases ONNX session memory) — CRITICAL for RSS, per D-08
-    {
+    // 4. Capture old model to enable revert on switch failure. Per D-08, we still
+    // drop the old model BEFORE loading new to prevent RSS doubling, but we keep
+    // the value so the spawned thread can restore it if the new model fails.
+    let old_model = {
         let mut active = ACTIVE_MODEL.lock().map_err(|e| e.to_string())?;
-        let old = active.take(); // drop() happens here — frees ONNX memory
-        if let Some(old_model) = old {
-            log::info!("Dropped old model '{}' to free memory", old_model.model_id);
-        }
+        active.take()
+    };
+    if old_model.is_some() {
+        log::info!("Captured old model for potential revert on switch failure");
     }
 
     let path_clone = model_path.clone();
@@ -247,6 +249,7 @@ pub(crate) fn switch_model_with_dir(model_id: &str, model_dir: &Path) -> Result<
 
         match result {
             Ok(Ok(model)) => {
+                log::info!("Dropped old model (replaced by '{}')", model_id_owned);
                 states.insert(model_id_owned.clone(), ModelState::Loaded);
                 active.replace(LoadedModel {
                     model_id: model_id_owned.clone(),
@@ -259,6 +262,12 @@ pub(crate) fn switch_model_with_dir(model_id: &str, model_dir: &Path) -> Result<
                     model_id_owned.clone(),
                     ModelState::Error(format!("模型切换失败: {}", e)),
                 );
+                // Revert: restore the old model on failure (Gap 1)
+                if let Some(prev) = old_model {
+                    log::warn!("Model switch failed, reverting to '{}'", prev.model_id);
+                    states.insert(prev.model_id.clone(), ModelState::Loaded);
+                    active.replace(prev);
+                }
                 log::error!("Model switch to '{}' failed: {}", model_id_owned, e);
             }
             Err(panic_err) => {
@@ -273,6 +282,12 @@ pub(crate) fn switch_model_with_dir(model_id: &str, model_dir: &Path) -> Result<
                     model_id_owned.clone(),
                     ModelState::Error(format!("模型切换崩溃: {}", msg)),
                 );
+                // Revert: restore the old model on failure (Gap 1)
+                if let Some(prev) = old_model {
+                    log::warn!("Model switch panicked, reverting to '{}'", prev.model_id);
+                    states.insert(prev.model_id.clone(), ModelState::Loaded);
+                    active.replace(prev);
+                }
                 log::error!("Model switch to '{}' panicked: {}", model_id_owned, msg);
             }
         }

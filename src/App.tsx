@@ -83,6 +83,13 @@ function App() {
           const store = useStore.getState();
           if (store.modelSwitching) {
             store.setModelSwitching(false);
+            // Extract error message from state for the error card
+            let errMsg = "模型切换失败";
+            const state = currentModel.state as any;
+            if (typeof state === "object" && state !== null && typeof state.Error === "string") {
+              errMsg = state.Error;
+            }
+            store.setModelSwitchingError(errMsg);
           }
         } else if (currentModel?.state === "loading") {
           // modelSwitching remains true — set by ControlPanel on selector change

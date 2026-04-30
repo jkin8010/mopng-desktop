@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ZoomIn, ZoomOut, RotateCcw, ImageOff, Loader2 } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, ImageOff, Loader2, XCircle, X } from "lucide-react";
 import { useStore } from "@/store";
 import { cn } from "@/lib/utils";
 import { createMattingEngine } from "./konva/mattingEngine";
@@ -14,6 +14,8 @@ interface PreviewCanvasProps {
 export function PreviewCanvas({ task }: PreviewCanvasProps) {
   const currentSettings = useStore((s) => s.currentSettings);
   const modelSwitching = useStore((s) => s.modelSwitching);
+  const modelSwitchingError = useStore((s) => s.modelSwitchingError);
+  const setModelSwitchingError = useStore((s) => s.setModelSwitchingError);
   const activeModelId = useStore((s) => s.activeModelId);
   const availableModels = useStore((s) => s.availableModels);
   const switchingModelName = availableModels.find((m) => m.id === activeModelId)?.name || activeModelId;
@@ -311,6 +313,27 @@ export function PreviewCanvas({ task }: PreviewCanvasProps) {
                 <p className="text-sm font-semibold">正在切换至 {switchingModelName}</p>
                 <p className="text-xs text-muted-foreground mt-1">正在加载模型...</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Model switch error card */}
+      {!modelSwitching && modelSwitchingError && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm mx-4">
+          <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/30 shadow-lg">
+            <div className="flex items-start gap-3">
+              <XCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-destructive">模型切换失败</p>
+                <p className="text-xs text-muted-foreground mt-1">{modelSwitchingError}</p>
+              </div>
+              <button
+                onClick={() => { setModelSwitchingError(null); }}
+                className="p-1 rounded-md hover:bg-destructive/20 transition-colors shrink-0"
+              >
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
             </div>
           </div>
         </div>
