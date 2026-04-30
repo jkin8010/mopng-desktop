@@ -28,8 +28,8 @@ function App() {
   useEffect(() => {
     const initModels = async () => {
       try {
-        // 获取所有可用模型
-        const models: ModelInfo[] = await invoke("list_models");
+        // Scan models directory on startup to populate registry descriptors
+        const models: ModelInfo[] = await invoke("scan_models");
         setAvailableModels(models);
 
         const modelId = activeModelId || "birefnet";

@@ -25,6 +25,7 @@ fn main() {
             models::init_model,
             models::is_model_loaded,
             models::list_models,
+            models::scan_models,
             commands::check_model,
             commands::download_model,
             commands::cancel_download,

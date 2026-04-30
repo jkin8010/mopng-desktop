@@ -146,6 +146,27 @@ pub fn list_models() -> Vec<registry::ModelInfo> {
     registry::list_models()
 }
 
+#[tauri::command]
+pub fn scan_models(app: tauri::AppHandle) -> Result<Vec<registry::ModelInfo>, String> {
+    let models_dir = registry::model_dir(&app)?;
+    let descriptors = registry::scan_models_directory(&models_dir);
+
+    {
+        let mut lock = registry::DESCRIPTORS
+            .write()
+            .map_err(|e| format!("DESCRIPTORS lock poisoned: {}", e))?;
+        *lock = descriptors;
+    }
+
+    let count = registry::DESCRIPTORS
+        .read()
+        .map_err(|e| e.to_string())?
+        .len();
+    log::info!("Scanned {} models from {:?}", count, models_dir);
+
+    Ok(registry::list_models())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
