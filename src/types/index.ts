@@ -127,6 +127,13 @@ export interface DownloadErrorResponse {
   model_filename: string;
 }
 
+export interface PluginCapabilities {
+  matting: boolean;
+  backgroundReplace: boolean;
+  edgeRefinement: boolean;
+  uncertaintyMask: boolean;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -135,6 +142,8 @@ export interface ModelInfo {
   checksum?: string;
   filename: string;
   sources: ModelSource[];
+  paramSchema?: Record<string, unknown>;
+  capabilities?: PluginCapabilities;
 }
 
 export const DEFAULT_SETTINGS: MattingSettings = {
