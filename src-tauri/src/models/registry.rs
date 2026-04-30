@@ -234,6 +234,8 @@ pub fn model_sources_for(model_id: &str) -> Option<Vec<ModelSource>> {
 fn create_model(id: &str) -> Result<Box<dyn MattingModel>, String> {
     match id {
         "birefnet" => Ok(Box::new(crate::models::birefnet::BirefnetModel::new())),
+        "rmbg-fp32" => Ok(Box::new(crate::models::rmbg::RmbgModel::new("rmbg-fp32"))),
+        "rmbg-fp16" => Ok(Box::new(crate::models::rmbg::RmbgModel::new("rmbg-fp16"))),
         _ => Err(format!("不支持的模型: {}", id)),
     }
 }

@@ -1,0 +1,52 @@
+{
+  "id": "rmbg-fp32",
+  "name": "RMBG 1.4 (FP32)",
+  "description": "BRIA 背景移除模型 (FP32 精度)，基于 BiRefNet 架构训练，适合高质量抠图",
+  "filename": "rmbg.onnx",
+  "checksum": null,
+  "inputSize": 1024,
+  "mean": [0.485, 0.456, 0.406],
+  "std": [0.229, 0.224, 0.225],
+  "sources": [
+    {
+      "id": "modelscope",
+      "name": "ModelScope",
+      "description": "魔搭社区，国内可直接访问",
+      "url": "https://modelscope.cn/models/onnx-community/RMBG-1.4-ONNX/resolve/main/onnx/model.onnx",
+      "default": true
+    },
+    {
+      "id": "huggingface",
+      "name": "HuggingFace",
+      "description": "海外源，需科学上网",
+      "url": "https://huggingface.co/onnx-community/RMBG-1.4-ONNX/resolve/main/onnx/model.onnx",
+      "default": false
+    },
+    {
+      "id": "hf-mirror",
+      "name": "HF Mirror",
+      "description": "HuggingFace 国内镜像",
+      "url": "https://hf-mirror.com/onnx-community/RMBG-1.4-ONNX/resolve/main/onnx/model.onnx",
+      "default": false
+    }
+  ],
+  "param_schema": {
+    "type": "object",
+    "properties": {
+      "threshold": {
+        "type": "number",
+        "title": "阈值",
+        "description": "控制抠图边缘的锐利程度",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "default": 0.5
+      }
+    }
+  },
+  "capabilities": {
+    "matting": true,
+    "backgroundReplace": false,
+    "edgeRefinement": false,
+    "uncertaintyMask": false
+  }
+}
