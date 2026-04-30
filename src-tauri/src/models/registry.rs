@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::RwLock;
@@ -11,8 +12,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::commands::ModelSource;
+use crate::models::descriptor::DescriptorJson;
 use crate::models::MattingModel;
 use crate::models::ModelState;
+use crate::models::PluginCapabilities;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
@@ -49,51 +52,10 @@ struct LoadedModel {
     model: Box<dyn MattingModel>,
 }
 
-static DESCRIPTORS: Lazy<RwLock<Vec<ModelDescriptor>>> = Lazy::new(|| {
-    // Temporary hardcoded descriptor — will be replaced by file-system scanning (D-18/D-19)
-    RwLock::new(vec![ModelDescriptor {
-        id: "birefnet".to_string(),
-        name: "BiRefNet".to_string(),
-        description: "通用高精度抠图模型，支持各类主体（人物、物体、动物等）".to_string(),
-        filename: "birefnet.onnx".to_string(),
-        checksum: Some("58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c".to_string()),
-        param_schema: serde_json::json!({
-            "type": "object",
-            "properties": {}
-        }),
-        capabilities: crate::models::PluginCapabilities {
-            matting: true,
-            background_replace: false,
-            edge_refinement: false,
-            uncertainty_mask: false,
-        },
-        input_size: Some(1024),
-        mean: Some(vec![0.485, 0.456, 0.406]),
-        std: Some(vec![0.229, 0.224, 0.225]),
-        sources: vec![
-            ModelSource {
-                id: "modelscope".into(),
-                name: "ModelScope".into(),
-                description: "魔搭社区，国内可直接访问".into(),
-                url: "https://modelscope.cn/models/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
-                default: true,
-            },
-            ModelSource {
-                id: "huggingface".into(),
-                name: "HuggingFace".into(),
-                description: "海外源，需科学上网".into(),
-                url: "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
-                default: false,
-            },
-            ModelSource {
-                id: "hf-mirror".into(),
-                name: "HF Mirror".into(),
-                description: "HuggingFace 国内镜像".into(),
-                url: "https://hf-mirror.com/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx".into(),
-                default: false,
-            },
-        ],
-    }])
+/// Populated by scan_models_directory() at startup via the scan_models Tauri command.
+/// Empty at compile time — models are discovered from models/*/descriptor.json at runtime.
+pub(crate) static DESCRIPTORS: Lazy<RwLock<Vec<ModelDescriptor>>> = Lazy::new(|| {
+    RwLock::new(Vec::new())
 });
 
 static ACTIVE_MODEL: Lazy<Mutex<Option<LoadedModel>>> = Lazy::new(|| {
@@ -256,7 +218,7 @@ pub fn model_filename_for(model_id: &str) -> Option<String> {
     descriptors
         .iter()
         .find(|d| d.id == model_id)
-        .map(|d| d.filename.to_string())
+        .map(|d| d.filename.clone())
 }
 
 pub fn model_sources_for(model_id: &str) -> Option<Vec<ModelSource>> {
@@ -274,6 +236,71 @@ fn create_model(id: &str) -> Result<Box<dyn MattingModel>, String> {
         "birefnet" => Ok(Box::new(crate::models::birefnet::BirefnetModel::new())),
         _ => Err(format!("不支持的模型: {}", id)),
     }
+}
+
+/// Scan the models directory for subdirectories containing descriptor.json + model.onnx.
+/// Returns all valid ModelDescriptors found. Silently skips invalid/missing descriptors.
+/// Per D-18: each subdirectory represents a model with model.onnx and descriptor.json.
+/// Per D-19: scan happens at startup, results cached in DESCRIPTORS RwLock.
+pub fn scan_models_directory(base_dir: &Path) -> Vec<ModelDescriptor> {
+    let mut descriptors = Vec::new();
+    let entries = match std::fs::read_dir(base_dir) {
+        Ok(e) => e,
+        Err(_) => return descriptors,
+    };
+
+    for entry in entries.flatten() {
+        let model_dir = entry.path();
+        if !model_dir.is_dir() {
+            continue;
+        }
+
+        let desc_path = model_dir.join("descriptor.json");
+        if !desc_path.exists() {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(&desc_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let desc: DescriptorJson = match serde_json::from_str(&content) {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("Skipping invalid descriptor.json in {:?}: {}", model_dir, e);
+                continue;
+            }
+        };
+
+        // Validate: filename must not contain path separators (security — T-B03-01)
+        if desc.filename.contains('/') || desc.filename.contains('\\') || desc.filename.contains("..") {
+            log::warn!("Skipping model {}: filename contains path separators", desc.id);
+            continue;
+        }
+
+        // Validate: id must not be empty
+        if desc.id.is_empty() {
+            log::warn!("Skipping model in {:?}: empty id", model_dir);
+            continue;
+        }
+
+        descriptors.push(ModelDescriptor {
+            id: desc.id,
+            name: desc.name,
+            description: desc.description,
+            filename: desc.filename,
+            sources: desc.sources,
+            checksum: desc.checksum,
+            param_schema: desc.param_schema,
+            capabilities: desc.capabilities,
+            input_size: desc.input_size,
+            mean: desc.mean,
+            std: desc.std,
+        });
+    }
+
+    descriptors
 }
 
 fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
