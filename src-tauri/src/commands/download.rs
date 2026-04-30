@@ -7,6 +7,52 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 
+/// Download the descriptor.json for a model from the same base URL as the ONNX file.
+/// Non-fatal: failure to download descriptor.json does not fail the model download.
+async fn download_descriptor_json(
+    source_url: &str,
+    model_dir: &std::path::Path,
+    model_id: &str,
+) -> Result<(), String> {
+    // Derive descriptor URL: replace last path segment with "descriptor.json"
+    let desc_url = source_url
+        .rsplit_once('/')
+        .map(|(base, _)| format!("{}/descriptor.json", base))
+        .unwrap_or_else(|| source_url.to_string());
+
+    log::info!("Downloading descriptor.json from: {}", desc_url);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&desc_url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("descriptor.json 下载失败: {}", e))?;
+
+    if !response.status().is_success() {
+        log::warn!("descriptor.json not found at {}: HTTP {}", desc_url, response.status());
+        return Ok(());
+    }
+
+    let content = response.text().await.map_err(|e| format!("descriptor.json 读取失败: {}", e))?;
+
+    // Validate JSON structure
+    if serde_json::from_str::<crate::models::descriptor::DescriptorJson>(&content).is_err() {
+        log::warn!("Downloaded descriptor.json is invalid, skipping");
+        return Ok(());
+    }
+
+    // Save to models/{id}/descriptor.json
+    let model_subdir = model_dir.join(model_id);
+    std::fs::create_dir_all(&model_subdir).map_err(|e| format!("创建模型目录失败: {}", e))?;
+    let desc_path = model_subdir.join("descriptor.json");
+    std::fs::write(&desc_path, &content).map_err(|e| format!("保存 descriptor.json 失败: {}", e))?;
+
+    log::info!("descriptor.json saved to {:?}", desc_path);
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSource {
     pub id: String,
@@ -119,6 +165,11 @@ async fn download_model_with_fallback(app: AppHandle, model_id: &str) -> Result<
         log::info!("尝试下载源: {} ({})", source.name, source.url);
         match download_from_source(&app, &model_path, source, model_id).await {
             Ok(path) => {
+                // Try to download descriptor.json (non-fatal)
+                if let Err(e) = download_descriptor_json(&source.url, &model_dir, model_id).await {
+                    log::warn!("descriptor.json download failed (non-fatal): {}", e);
+                }
+
                 let final_size = tokio::fs::metadata(&model_path).await.map(|m| m.len()).unwrap_or(0);
                 let _ = app.emit("model-download-complete", ModelInfo {
                     exists: true,
