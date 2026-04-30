@@ -13,6 +13,10 @@ interface PreviewCanvasProps {
 
 export function PreviewCanvas({ task }: PreviewCanvasProps) {
   const currentSettings = useStore((s) => s.currentSettings);
+  const modelSwitching = useStore((s) => s.modelSwitching);
+  const activeModelId = useStore((s) => s.activeModelId);
+  const availableModels = useStore((s) => s.availableModels);
+  const switchingModelName = availableModels.find((m) => m.id === activeModelId)?.name || activeModelId;
   const containerRef = useRef<HTMLDivElement>(null);
   const konvaHostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<{ api: KonvaEngineApi; destroy: () => void } | null>(null);
@@ -294,6 +298,21 @@ export function PreviewCanvas({ task }: PreviewCanvasProps) {
       {task.status === "error" && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-full bg-destructive text-destructive-foreground text-sm shadow-lg">
           错误: {task.error}
+        </div>
+      )}
+
+      {/* Model switch loading overlay */}
+      {modelSwitching && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/85 backdrop-blur-sm transition-opacity duration-150">
+          <div className="max-w-xs w-full mx-4 p-6 rounded-lg bg-card border border-border shadow-lg">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <Loader2 className="w-10 h-10 animate-spin text-primary" />
+              <div>
+                <p className="text-sm font-semibold">正在切换至 {switchingModelName}</p>
+                <p className="text-xs text-muted-foreground mt-1">正在加载模型...</p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

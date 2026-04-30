@@ -32,15 +32,20 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     isProcessing,
     availableModels,
     activeModelId,
+    modelSwitching,
     updateSettings,
     updateTask,
     updateTaskResult,
     selectTask,
     setActiveModelId,
+    setModelSwitching,
     setProcessing,
   } = useStore();
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId);
+  const activeModelInfo = availableModels.find((m) => m.id === activeModelId);
+  const modelNotReady = activeModelInfo?.state !== "loaded";
+  const modelIsLoading = activeModelInfo?.state === "loading";
 
   const handleModeChange = (value: string) => {
     updateSettings({ mode: value as MattingMode });
@@ -165,6 +170,17 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     }
     return 0;
   })();
+
+  const handleModelChange = useCallback(async (newModelId: string) => {
+    setActiveModelId(newModelId);
+    useStore.getState().setModelSwitching(true);
+    try {
+      await invoke("switch_model", { modelId: newModelId });
+    } catch (err) {
+      console.error("模型切换失败:", err);
+      useStore.getState().setModelSwitching(false);
+    }
+  }, [setActiveModelId]);
 
   const handleProcess = useCallback(async () => {
     if (!selectedTask) return;
@@ -334,11 +350,11 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
         </div>
 
         <div className="p-4 space-y-5">
-          {/* Model Selector */}
-          {availableModels.length > 1 && (
+          {/* Model Selector — always visible per UI-SPEC */}
+          {availableModels.length > 0 && (
             <div className="space-y-2">
               <label className="text-xs font-medium text-muted-foreground">AI 模型</label>
-              <Select value={activeModelId} onValueChange={setActiveModelId}>
+              <Select value={activeModelId} onValueChange={handleModelChange}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -346,7 +362,9 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
                   {availableModels.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
                       {m.name}
-                      {m.state !== "loaded" && <span className="ml-2 text-xs text-muted-foreground">(未下载)</span>}
+                      {m.state === "notDownloaded" && <span className="ml-2 text-xs text-muted-foreground">(未下载)</span>}
+                      {m.state === "loading" && <span className="ml-2 text-xs text-muted-foreground">(加载中...)</span>}
+                      {m.state === "error" && <span className="ml-2 text-xs text-destructive">(加载失败)</span>}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -598,10 +616,16 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
             <Button
               className="w-full"
               onClick={handleProcess}
-              disabled={!selectedTask || isProcessing || selectedTask.status === "processing"}
+              disabled={!selectedTask || isProcessing || selectedTask.status === "processing" || modelNotReady}
             >
               <Play className="w-4 h-4 mr-2" />
-              {selectedTask?.status === "processing" ? "处理中..." : "开始抠图"}
+              {(() => {
+                if (isProcessing || selectedTask?.status === "processing") return "处理中...";
+                if (modelIsLoading) return "模型加载中...";
+                if (activeModelInfo?.state === "notDownloaded") return "请先下载模型";
+                if (activeModelInfo?.state === "error") return "模型加载失败";
+                return "开始抠图";
+              })()}
             </Button>
 
             <Button

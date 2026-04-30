@@ -61,7 +61,7 @@ function App() {
     initModels();
   }, []);
 
-  // 轮询 list_models() 监控模型异步加载状态
+  // 轮询 list_models() 监控模型异步加载状态及模型切换完成
   useEffect(() => {
     const pollInterval = setInterval(async () => {
       try {
@@ -70,11 +70,22 @@ function App() {
         const currentModel = models.find((m) => m.id === activeModelId);
         if (currentModel?.state === "loaded") {
           setModelStatus({ exists: true, downloading: false, progress: 100, state: "loaded" });
-          if (useStore.getState().modelDialogOpen) {
+          const store = useStore.getState();
+          if (store.modelDialogOpen) {
             setModelDialogOpen(false);
+          }
+          // Clear switching state on successful load
+          if (store.modelSwitching) {
+            store.setModelSwitching(false);
           }
         } else if (currentModel?.state === "error") {
           console.warn("模型加载失败:", currentModel);
+          const store = useStore.getState();
+          if (store.modelSwitching) {
+            store.setModelSwitching(false);
+          }
+        } else if (currentModel?.state === "loading") {
+          // modelSwitching remains true — set by ControlPanel on selector change
         }
       } catch {
         // 轮询失败静默处理
