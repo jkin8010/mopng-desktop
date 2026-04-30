@@ -1,110 +1,91 @@
 ---
 phase: B-plugin-descriptor-multi-model
 plan: 07
-type: execute
+type: fix
 subsystem: "model-params-ui"
-tags: [json-schema, auto-ui, radix-ui, accordion, model-params]
-depends_on: [B-06]
+tags: [model-switch, revert, model-params, threshold, inference-pipeline]
+depends_on: [B-07]
 provides: [MDL-04]
-affects: [ControlPanel, Zustand store, Rust IPC]
+affects: [ControlPanel, PreviewCanvas, Zustand store, Rust IPC, RmbgModel, BirefnetModel, registry]
 tech-stack:
-  added: [@radix-ui/react-accordion, shadcn accordion component]
+  added: []
   patterns:
-    - "Pure mapping function: JSON Schema properties → ControlDescriptor[]"
-    - "Auto-generated parameter UI without per-model hardcoding"
-    - "Collapsible accordion wrapper for model parameter section"
+    - "Model switch revert: restore old model on failure, prevent permanent model loss"
+    - "Dynamic model params: thread threshold from Zustand through IPC to infer()"
+    - "Temporary threshold override pattern in infer() without changing postprocess signature"
 key-files:
-  created:
-    - "src/components/json-schema/schemaToControls.ts"
-    - "src/components/ModelParamControl.tsx"
-    - "src/components/ModelParamSection.tsx"
-    - "src/components/ui/accordion.tsx"
   modified:
-    - "src/components/ControlPanel.tsx"
+    - "src-tauri/src/models/registry.rs"
     - "src-tauri/src/models/mod.rs"
-    - "package.json"
-    - "tailwind.config.js"
+    - "src-tauri/src/models/rmbg.rs"
+    - "src-tauri/src/models/birefnet.rs"
+    - "src-tauri/src/commands/mod.rs"
+    - "src/store/useStore.ts"
+    - "src/App.tsx"
+    - "src/components/PreviewCanvas.tsx"
+    - "src/components/ControlPanel.tsx"
 metrics:
-  duration: "5 min 31 sec"
+  duration: "15 min"
   completed_date: "2026-04-30"
 decisions: []
 ---
 
-# Phase B Plugin Descriptor Multi-Model Plan 07: Model Parameter Auto-UI
+# Phase B Plugin Descriptor Multi-Model: Verification Gap Fixes
 
 ## One-Liner
 
-Auto-generated model parameter UI: a pure function maps JSON Schema param_schema to ControlDescriptor objects, rendered as Radix UI controls (Slider, Select, Switch, Number, Text) in a collapsible shadcn Accordion section, with values flowing through Zustand store to Rust process_image.
+Fix two verification gaps in B-07: (1) model switch failure now reverts to old model with error card UI instead of permanent loss, (2) threshold slider values now actually affect RMBG 1.4 inference output.
 
 ## Tasks Executed
 
-### Task 1: Install shadcn accordion and create schemaToControls mapper
+### Task 1: Gap 1 — Add revert logic on switch failure + error card UI
 
-- Installed `@radix-ui/react-accordion` via `npx shadcn add accordion`
-- Created `src/components/ui/accordion.tsx`
-- Created `src/components/json-schema/schemaToControls.ts` — pure function mapping JSON Schema types to ControlDescriptors per D-13:
-  - `{type: "number"}` → `"slider"` with min/max/step
-  - `{type: "integer"}` → `"number"` input
-  - `{type: "boolean"}` → `"switch"`
-  - `{type: "string", enum: [...]}` → `"select"` with options
-  - `{type: "string"}` (no enum) → `"text"` input
-  - Unknown types default to `"text"` (safe fallback per T-B07-01)
-  - Supports `"x-order"` for explicit property ordering (Pitfall 4)
-  - Returns `[]` for null/empty schema
-- Commits: `3b41122` (main), `82a04af` (deps/config side effects)
+**Part A — registry.rs:** `switch_model_with_dir` now captures the old model before `active.take()` and moves it into the spawned thread closure. On both `Err` and panic branches, the old model is restored to `ACTIVE_MODEL` and its state set back to `Loaded`.
 
-### Task 2: Create ModelParamControl and ModelParamSection
+**Part B — useStore.ts:** Added `modelSwitchingError: string | null` field and `setModelSwitchingError` action.
 
-- Created `src/components/ModelParamControl.tsx` — renders single control using existing Radix UI primitives (Slider, Select, Switch, Input) with Label and value display
-- Created `src/components/ModelParamSection.tsx` — collapsible shadcn Accordion wrapper:
-  - Derives controls via `useMemo(() => schemaToControls(paramSchema, modelParams), [paramSchema, modelParams])`
-  - Returns `null` when `controls.length === 0`
-  - Default expanded state with ChevronDown icon rotation per UI-SPEC
-  - Hidden default AccordionTrigger chevron via `[&>svg]:hidden`
-- Commit: `0890088`
+**Part C — App.tsx:** In the polling useEffect, when switch fails (state === "error" and modelSwitching is true), calls `setModelSwitchingError` with the extracted error message.
 
-### Task 3: Integrate into ControlPanel and wire to Rust
+**Part D — PreviewCanvas.tsx:** Added error card UI rendered after the modelSwitching overlay. Shows XCircle icon, error title/message, and dismiss button. Uses existing lucide XCircle and X icons.
 
-- Imported `ModelParamSection` in `src/components/ControlPanel.tsx`
-- Rendered `<ModelParamSection />` after model selector and before mode selector (per UI-SPEC Layout Contract)
-- Updated `handleProcess` to send `modelParams: store.modelParams ?? {}` in invoke payload
-- Added `model_params: serde_json::Value` field with `#[serde(default)]` to Rust `ProcessParams` struct in `src-tauri/src/models/mod.rs`
-- Commit: `9dccf35`
+**Part E — ControlPanel.tsx:** `handleModelChange` clears `modelSwitchingError` before initiating a new switch, auto-dismissing any prior error.
+
+- Commit: `f05a7ba`
+
+### Task 2: Gap 2 — Thread model_params through inference pipeline
+
+**Part A — mod.rs:** Changed `MattingModel::infer` trait signature from `infer(&mut self, image: DynamicImage)` to `infer(&mut self, image: DynamicImage, params: serde_json::Value)`.
+
+**Part B — registry.rs:** Updated `infer()` to accept and forward `params` to the active model's `infer()`.
+
+**Part C — commands/mod.rs:** Clones `params.model_params` outside the spawning closure and passes it to `registry::infer()`.
+
+**Part D — rmbg.rs:** `RmbgModel::infer()` reads `params.get("threshold")`, falls back to `self.threshold` (0.5). Uses temporary threshold override pattern: saves `self.threshold`, sets it to the dynamic value, calls `self.postprocess()`, restores the original.
+
+**Part E — birefnet.rs:** Updated `BirefnetModel::infer()` signature to accept `_params: serde_json::Value` (unused since BiRefNet has no params).
+
+**Part F — Tests:** All `infer()` calls in test code updated to pass `serde_json::json!({})`.
+
+- Commit: `f3197c0`
 
 ## Verification Results
 
-- `npx tsc --noEmit` — **PASSED** (no errors)
-- `cargo check` — **PASSED** (exit code 0, 3 pre-existing warnings)
-- All 4 created files exist at specified paths
+- `npx tsc --noEmit` — PASSED (exit code 0)
+- `cargo check` — PASSED (exit code 0, 3 pre-existing warnings)
+- `cargo test -- --test-threads=1` — PASSED (29/29 tests passed)
 
 ## Deviations from Plan
 
-### Auto-fixed Issues
-
-**1. [Rule 3 - Blocking] Duplicate accordion keyframes in tailwind.config.js**
-- **Found during:** Post-install diff review
-- **Issue:** `npx shadcn@latest add accordion` duplicated the `accordion-down` and `accordion-up` keyframes and animation entries (tabs indentation + duplicate values)
-- **Fix:** Removed duplicate entries, restored unique keyframes/animation objects
-- **Files modified:** `tailwind.config.js`
-- **Commit:** `82a04af`
-
-**2. [Rule 1 - Bug] shadcn install modified indentation to tabs**
-- **Found during:** Post-install diff review
-- **Issue:** The shadcn@4 tool converted `tailwind.config.js` from 2-space indentation to tabs, generating a noisier diff
-- **Fix:** Restored original 2-space indentation style while keeping necessary changes
-- **Files modified:** `tailwind.config.js`
-- **Commit:** `82a04af`
+None — plan executed exactly as written.
 
 ## Threat Assessment
 
-No new threat flags introduced. The `model_params` data flows through existing IPC trust boundaries (Zustand → Tauri invoke → Rust deserialization). Rust receives JSON values, and the existing threat model already covers this with:
-- T-B07-03: Rust-side deserialization with `#[serde(default)]` ensures graceful handling of missing/invalid fields
-- T-B07-01: Unrecognized JSON Schema types default to `"text"` input render, safe by design
+No new threat flags. The `model_params` serde_json::Value flows through existing IPC trust boundaries. Threshold is safely extracted with `.and_then(|v| v.as_f64())` — invalid/missing values fall back to default (0.5).
 
 ## Known Stubs
 
-None. The implementation is complete: all 5 control types are fully wired, empty schemas render nothing, and all values flow to Rust.
+None.
 
 ## Self-Check: PASSED
 
-All 4 created files exist. All 4 commits exist in git log.
+Both commits exist in git log. All 9 modified files verified.
