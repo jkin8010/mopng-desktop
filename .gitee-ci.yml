@@ -1,0 +1,118 @@
+# MoPNG Desktop — Gitee CI/CD 配置
+# 平台: Gitee Go (https://gitee.com/help/categories/57)
+#
+# 使用方法:
+#   1. 在 Gitee 仓库页面顶部点击 "Gitee Go" 标签
+#   2. 按提示开通 Gitee Go 服务
+#   3. 将此文件提交到仓库根目录即可自动生效
+#
+# 注意: macOS/Windows 构建依赖 GitHub Actions (macOS runner + Apple 签名公证)
+#       Gitee CI 仅负责 Linux 端的校验构建
+
+name: mopng-desktop-ci
+displayName: MoPNG Desktop CI
+
+triggers:
+  push:
+    branches:
+      include:
+        - main
+        - develop
+  pull_request:
+    branches:
+      include:
+        - main
+    target:
+      include:
+        - main
+  tag:
+    include:
+      - 'v*.*.*'
+
+stages:
+  # ============================================================
+  # Stage 1: 前端构建校验
+  # ============================================================
+  - name: build-frontend
+    displayName: 前端构建 & 校验
+    jobs:
+      - name: frontend
+        displayName: TypeScript + Vite 构建
+        image: node:22
+        steps:
+          - name: checkout
+            uses: checkout@v1
+
+          - name: setup-pnpm
+            run: npm install -g pnpm
+
+          - name: install
+            run: pnpm install --frozen-lockfile
+
+          - name: build
+            run: pnpm run build
+
+  # ============================================================
+  # Stage 2: Rust 后端构建校验
+  # ============================================================
+  - name: build-rust
+    displayName: Rust 后端构建 & 校验
+    jobs:
+      - name: rust
+        displayName: Cargo Check (Linux)
+        image: rust:1.81
+        steps:
+          - name: checkout
+            uses: checkout@v1
+
+          - name: install-system-deps
+            run: |
+              apt-get update
+              apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+                libappindicator3-dev librsvg2-dev patchelf
+
+          - name: cargo-check
+            run: cd src-tauri && cargo check
+
+  # ============================================================
+  # Stage 3: Linux 平台 Tauri 构建 (仅 tag 触发)
+  # ============================================================
+  - name: build-linux-release
+    displayName: Linux 发布构建
+    only:
+      trigger:
+        - tag
+    jobs:
+      - name: linux-release
+        displayName: Tauri Build (Linux .AppImage/.deb)
+        image: rust:1.81
+        steps:
+          - name: checkout
+            uses: checkout@v1
+
+          - name: setup-node
+            run: |
+              curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+              apt-get install -y nodejs
+              npm install -g pnpm
+
+          - name: install-system-deps
+            run: |
+              apt-get update
+              apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+                libappindicator3-dev librsvg2-dev patchelf
+
+          - name: install-frontend
+            run: pnpm install --frozen-lockfile
+
+          - name: build-tauri
+            run: |
+              cd src-tauri
+              cargo build --release
+
+          - name: collect-artifacts
+            run: |
+              mkdir -p dist
+              find src-tauri/target/release -maxdepth 1 -type f -executable \
+                -name "mopng-desktop" -exec cp {} dist/ \; 2>/dev/null || true
+              echo "Artifacts collected to ./dist/"
