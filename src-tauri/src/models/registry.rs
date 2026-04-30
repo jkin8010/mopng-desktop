@@ -279,3 +279,136 @@ fn create_model(id: &str) -> Result<Box<dyn MattingModel>, String> {
 fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
     crate::commands::download::compute_file_sha256(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    /// Create a minimal descriptor.json for testing.
+    fn write_descriptor(dir: &Path, id: &str, name: &str, filename: &str) {
+        fs::create_dir_all(dir).unwrap();
+        let json = serde_json::json!({
+            "id": id,
+            "name": name,
+            "description": "Test model for file-system scanning",
+            "filename": filename,
+        });
+        fs::write(
+            dir.join("descriptor.json"),
+            serde_json::to_string_pretty(&json).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("mopng-test-scan-{}", label))
+    }
+
+    fn clean(path: &Path) {
+        if path.exists() {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn scan_models_directory_returns_descriptor_when_valid() {
+        let root = temp_dir("valid");
+        clean(&root);
+        write_descriptor(&root.join("birefnet"), "birefnet", "BiRefNet", "birefnet.onnx");
+
+        let descriptors = scan_models_directory(&root);
+        assert_eq!(descriptors.len(), 1, "Should find one model");
+        assert_eq!(descriptors[0].id, "birefnet");
+        assert_eq!(descriptors[0].name, "BiRefNet");
+        assert_eq!(descriptors[0].filename, "birefnet.onnx");
+
+        clean(&root);
+    }
+
+    #[test]
+    fn scan_models_directory_returns_empty_when_dir_missing() {
+        let root = temp_dir("missing");
+        clean(&root);
+
+        let descriptors = scan_models_directory(&root);
+        assert_eq!(
+            descriptors.len(),
+            0,
+            "Should return empty vec when directory does not exist"
+        );
+    }
+
+    #[test]
+    fn scan_models_directory_skips_subdir_without_descriptor() {
+        let root = temp_dir("nodesc");
+        clean(&root);
+        let model_dir = root.join("some-model");
+        fs::create_dir_all(&model_dir).unwrap();
+        // Create an ONNX file but NO descriptor.json
+        fs::write(model_dir.join("model.onnx"), b"fake onnx data").unwrap();
+
+        let descriptors = scan_models_directory(&root);
+        assert_eq!(
+            descriptors.len(),
+            0,
+            "Should skip subdirectory without descriptor.json"
+        );
+
+        clean(&root);
+    }
+
+    #[test]
+    fn scan_models_directory_skips_invalid_json_descriptor() {
+        let root = temp_dir("invalidjson");
+        clean(&root);
+        let model_dir = root.join("bad-model");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("descriptor.json"), b"not valid json {{{").unwrap();
+
+        let descriptors = scan_models_directory(&root);
+        assert_eq!(descriptors.len(), 0, "Should skip invalid descriptor.json");
+
+        clean(&root);
+    }
+
+    #[test]
+    fn list_models_includes_param_schema_and_capabilities() {
+        // Reset DESCRIPTORS with a known test descriptor
+        {
+            let mut lock = DESCRIPTORS.write().unwrap();
+            *lock = vec![ModelDescriptor {
+                id: "test-model".into(),
+                name: "Test".into(),
+                description: "Test desc".into(),
+                filename: "test.onnx".into(),
+                sources: vec![],
+                checksum: None,
+                param_schema: serde_json::json!({"test_param": true}),
+                capabilities: crate::models::PluginCapabilities {
+                    matting: true,
+                    background_replace: true,
+                    edge_refinement: false,
+                    uncertainty_mask: false,
+                },
+                input_size: None,
+                mean: None,
+                std: None,
+            }];
+        }
+
+        let models = list_models();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].param_schema, serde_json::json!({"test_param": true}));
+        assert!(models[0].capabilities.matting);
+        assert!(models[0].capabilities.background_replace);
+        assert!(!models[0].capabilities.edge_refinement);
+
+        // Clean up: reset to empty
+        {
+            let mut lock = DESCRIPTORS.write().unwrap();
+            *lock = vec![];
+        }
+    }
+}
