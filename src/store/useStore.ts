@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { MattingTask, MattingSettings, AppSettings, ModelStatus, ModelInfo } from "@/types";
+import type { MattingTask, MattingSettings, AppSettings, ModelStatus, ModelInfo, ModelParams } from "@/types";
 import { DEFAULT_APP_SETTINGS } from "@/types";
 
 interface AppState {
@@ -16,6 +16,7 @@ interface AppState {
   konvaExportFn: ((mimeType?: string, quality?: number) => string | null) | null;
   availableModels: ModelInfo[];
   activeModelId: string;
+  modelParams: ModelParams;
 
   // Actions
   addTasks: (tasks: MattingTask[]) => void;
@@ -35,6 +36,7 @@ interface AppState {
   setKonvaExportFn: (fn: ((mimeType?: string, quality?: number) => string | null) | null) => void;
   setAvailableModels: (models: ModelInfo[]) => void;
   setActiveModelId: (id: string) => void;
+  setModelParams: (params: ModelParams) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -62,6 +64,7 @@ export const useStore = create<AppState>()(
       konvaExportFn: null,
       availableModels: [],
       activeModelId: "birefnet",
+      modelParams: {},
 
       addTasks: (newTasks) =>
         set((state) => {
@@ -141,6 +144,8 @@ export const useStore = create<AppState>()(
       setAvailableModels: (models) => set({ availableModels: models }),
 
       setActiveModelId: (id) => set({ activeModelId: id }),
+
+      setModelParams: (params) => set({ modelParams: params }),
     }),
     {
       name: "mopng-desktop-store",
@@ -148,6 +153,7 @@ export const useStore = create<AppState>()(
         appSettings: state.appSettings,
         currentSettings: state.currentSettings,
         activeModelId: state.activeModelId,
+        modelParams: state.modelParams,
       }),
     }
   )

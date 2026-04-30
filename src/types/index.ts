@@ -146,6 +146,9 @@ export interface ModelInfo {
   capabilities?: PluginCapabilities;
 }
 
+/** Per-model parameter values keyed by parameter name (e.g., { threshold: 0.5 }) */
+export type ModelParams = Record<string, unknown>;
+
 export const DEFAULT_SETTINGS: MattingSettings = {
   mode: "foreground",
   outputFormat: "png",
