@@ -148,6 +148,12 @@ pub fn list_models() -> Vec<registry::ModelInfo> {
 }
 
 #[tauri::command]
+pub fn switch_model(model_id: String, app: tauri::AppHandle) -> Result<(), String> {
+    log::info!("切换模型: {}", model_id);
+    registry::switch_model(&model_id, &app)
+}
+
+#[tauri::command]
 pub fn scan_models(app: tauri::AppHandle) -> Result<Vec<registry::ModelInfo>, String> {
     let models_dir = registry::model_dir(&app)?;
     let descriptors = registry::scan_models_directory(&models_dir);

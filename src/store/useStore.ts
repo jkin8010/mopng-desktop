@@ -17,6 +17,7 @@ interface AppState {
   availableModels: ModelInfo[];
   activeModelId: string;
   modelParams: ModelParams;
+  modelSwitching: boolean;
 
   // Actions
   addTasks: (tasks: MattingTask[]) => void;
@@ -37,6 +38,7 @@ interface AppState {
   setAvailableModels: (models: ModelInfo[]) => void;
   setActiveModelId: (id: string) => void;
   setModelParams: (params: ModelParams) => void;
+  setModelSwitching: (switching: boolean) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -65,6 +67,7 @@ export const useStore = create<AppState>()(
       availableModels: [],
       activeModelId: "birefnet",
       modelParams: {},
+      modelSwitching: false,
 
       addTasks: (newTasks) =>
         set((state) => {
@@ -146,6 +149,8 @@ export const useStore = create<AppState>()(
       setActiveModelId: (id) => set({ activeModelId: id }),
 
       setModelParams: (params) => set({ modelParams: params }),
+
+      setModelSwitching: (switching) => set({ modelSwitching: switching }),
     }),
     {
       name: "mopng-desktop-store",
