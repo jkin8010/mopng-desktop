@@ -18,6 +18,7 @@ import { GradientAnglePicker, angleToCoords, coordsToAngle } from "@/components/
 import { Switch } from "@/components/ui/switch";
 import { ScrubInput } from "@/components/ui/scrub-input";
 import { SIZE_TEMPLATES, deriveTemplateId } from "@/types";
+import { ModelParamSection } from "@/components/ModelParamSection";
 import type { MattingMode, OutputFormat, BgType, SizeTemplateId } from "@/types";
 
 interface ControlPanelProps {
@@ -193,6 +194,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
     setProcessing(true);
 
     try {
+      const store = useStore.getState();
       const result = await invoke<{
         outputPath: string;
         width: number;
@@ -205,6 +207,7 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
         params: {
           filePath: selectedTask.filePath,
           settings: currentSettings,
+          modelParams: store.modelParams ?? {},
         },
       });
 
@@ -371,6 +374,9 @@ export function ControlPanel({ onOpenSettings }: ControlPanelProps) {
               </Select>
             </div>
           )}
+
+          {/* Model Parameters (auto-generated from param_schema) */}
+          <ModelParamSection />
 
           {/* Mode */}
           <div className="space-y-2">

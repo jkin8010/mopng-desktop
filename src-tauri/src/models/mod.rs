@@ -99,6 +99,8 @@ pub struct MattingSettings {
 pub struct ProcessParams {
     pub file_path: String,
     pub settings: MattingSettings,
+    #[serde(default)]
+    pub model_params: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
