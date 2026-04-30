@@ -46,7 +46,7 @@ pub trait MattingModel: Send + Sync {
     fn description(&self) -> &str;
     fn init(&mut self, model_path: PathBuf) -> Result<(), Box<dyn std::error::Error>>;
     fn is_loaded(&self) -> bool;
-    fn infer(&mut self, image: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>>;
+    fn infer(&mut self, image: DynamicImage, params: serde_json::Value) -> Result<Array3<u8>, Box<dyn std::error::Error>>;
     fn filename(&self) -> &str;
     fn sources(&self) -> Vec<ModelSource> {
         vec![]
@@ -189,7 +189,7 @@ mod tests {
         fn description(&self) -> &str { "Test model" }
         fn init(&mut self, _: PathBuf) -> Result<(), Box<dyn std::error::Error>> { Ok(()) }
         fn is_loaded(&self) -> bool { true }
-        fn infer(&mut self, _: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
+        fn infer(&mut self, _: DynamicImage, _: serde_json::Value) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
             Ok(Array3::zeros((1, 1, 1)))
         }
         fn filename(&self) -> &str { "test.onnx" }

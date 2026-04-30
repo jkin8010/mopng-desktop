@@ -52,7 +52,7 @@ impl MattingModel for BirefnetModel {
     }
 
     /// Refactored to delegate to preprocess() and postprocess(). Per D-03.
-    fn infer(&mut self, original_image: DynamicImage) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
+    fn infer(&mut self, original_image: DynamicImage, _params: serde_json::Value) -> Result<Array3<u8>, Box<dyn std::error::Error>> {
         // Take ownership of session to avoid borrow conflicts with preprocess/postprocess
         let mut session = self.session.take().ok_or("Session not initialized")?;
 
@@ -337,7 +337,7 @@ mod tests {
         let dyn_img = DynamicImage::ImageRgba8(test_img);
 
         // 3. Run inference
-        let output = model.infer(dyn_img).expect("推理失败");
+        let output = model.infer(dyn_img, serde_json::json!({})).expect("推理失败");
         log::info!("推理输出形状: {:?}", output.dim());
 
         // 4. Verify output dimensions

@@ -72,14 +72,22 @@ impl MattingModel for RmbgModel {
     fn infer(
         &mut self,
         original_image: DynamicImage,
+        params: serde_json::Value,
     ) -> Result<ndarray::Array3<u8>, Box<dyn std::error::Error>> {
+        // Read threshold from params, fall back to struct default
+        let threshold = params
+            .get("threshold")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(self.threshold);
+
         // Take ownership of session to avoid borrow conflicts with preprocess/postprocess
         let mut session = self.session.take().ok_or("Session not initialized")?;
 
         let original_width = original_image.width();
         let original_height = original_image.height();
 
-        log::info!("[RMBG] 原始图片尺寸: {}x{}", original_width, original_height);
+        log::info!("[RMBG] 原始图片尺寸: {}x{}, threshold: {:.2}", original_width, original_height, threshold);
 
         let input_tensor = self.preprocess(original_image)?;
 
@@ -100,7 +108,12 @@ impl MattingModel for RmbgModel {
 
         // Restore session before calling postprocess (which borrows self)
         self.session = Some(session);
-        self.postprocess(output_tensor, (original_width, original_height))
+        // Temporarily override threshold for this inference (Gap 2)
+        let saved_threshold = self.threshold;
+        self.threshold = threshold;
+        let result = self.postprocess(output_tensor, (original_width, original_height));
+        self.threshold = saved_threshold;
+        result
     }
 
     fn filename(&self) -> &str {

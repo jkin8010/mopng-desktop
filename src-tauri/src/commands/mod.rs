@@ -38,8 +38,9 @@ pub async fn process_image(
 
     // Run inference on a blocking thread so the async IPC stays responsive
     let inference_img = img.clone();
+    let inference_params = params.model_params.clone();
     let mask_u8 = tokio::task::spawn_blocking(move || {
-        crate::models::registry::infer(inference_img)
+        crate::models::registry::infer(inference_img, inference_params)
     })
     .await
     .map_err(|e| format!("Inference thread failed: {}", e))??;

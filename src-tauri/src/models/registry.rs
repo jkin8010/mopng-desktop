@@ -302,7 +302,7 @@ pub fn switch_model(model_id: &str, app: &AppHandle) -> Result<(), String> {
     switch_model_with_dir(model_id, &dir)
 }
 
-pub fn infer(image: DynamicImage) -> Result<Array3<u8>, String> {
+pub fn infer(image: DynamicImage, params: serde_json::Value) -> Result<Array3<u8>, String> {
     let mut lock = ACTIVE_MODEL
         .lock()
         .expect("ACTIVE_MODEL Mutex poisoned");
@@ -311,7 +311,7 @@ pub fn infer(image: DynamicImage) -> Result<Array3<u8>, String> {
         .ok_or_else(|| "模型未初始化，请先加载模型".to_string())?;
     loaded
         .model
-        .infer(image)
+        .infer(image, params)
         .map_err(|e| format!("推理失败: {}", e))
 }
 
