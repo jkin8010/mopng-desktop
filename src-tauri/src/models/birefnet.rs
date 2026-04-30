@@ -189,7 +189,7 @@ impl MattingModel for BirefnetModel {
 }
 
 /// Bilinear interpolation upscale of a 2D f32 mask.
-fn bilinear_resize_f32(mask: &Array2<f32>, new_width: u32, new_height: u32) -> Array2<f32> {
+pub(crate) fn bilinear_resize_f32(mask: &Array2<f32>, new_width: u32, new_height: u32) -> Array2<f32> {
     let old_h = mask.nrows();
     let old_w = mask.ncols();
     let nw = new_width as usize;
