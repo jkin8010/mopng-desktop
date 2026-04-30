@@ -10,6 +10,7 @@ use crate::commands::ModelSource;
 pub mod birefnet;
 pub mod descriptor;
 pub mod registry;
+pub mod rmbg;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelState {

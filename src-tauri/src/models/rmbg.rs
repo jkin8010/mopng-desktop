@@ -1,5 +1,5 @@
 use image::{imageops, DynamicImage};
-use ndarray::{Array2, Array3, Array4};
+use ndarray::{Array2, Array4};
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use std::path::PathBuf;
 
