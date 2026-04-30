@@ -440,4 +440,155 @@ mod tests {
             *lock = vec![];
         }
     }
+
+    // ── switch_model TDD tests ─────────────────────────────────────────────────
+    //
+    // These tests call switch_model_with_dir() which will fail to compile until
+    // switch_model is implemented. This is the RED phase of TDD.
+    //
+    // Behavior under test:
+    //   Test 1: switch_model("birefnet") when ACTIVE_MODEL is None -> sets
+    //           Loading state, spawns thread, loads model
+    //   Test 2: switch_model("rmbg-fp32") when ACTIVE_MODEL has birefnet loaded
+    //           -> drops old birefnet session, loads rmbg
+    //   Test 3: switch_model("nonexistent") -> returns Err, does not crash
+    //   Test 4: After successful switch, ACTIVE_MODEL contains the new model_id
+    //   Test 5: After failed switch, ACTIVE_MODEL is None (old model already
+    //           dropped per D-08)
+
+    /// Helper: register a test-model in DESCRIPTORS and create its model file.
+    fn register_test_model(root: &Path, id: &str, filename: &str, file_content: &[u8]) {
+        {
+            let mut lock = DESCRIPTORS.write().unwrap();
+            lock.push(ModelDescriptor {
+                id: id.into(),
+                name: format!("Test {}", id),
+                description: "Test model for switch_model".into(),
+                filename: filename.into(),
+                sources: vec![],
+                checksum: None,
+                param_schema: serde_json::json!({}),
+                capabilities: crate::models::PluginCapabilities::default(),
+                input_size: None,
+                mean: None,
+                std: None,
+            });
+        }
+        let model_subdir = root.join(id);
+        fs::create_dir_all(&model_subdir).unwrap();
+        fs::write(model_subdir.join(filename), file_content).unwrap();
+    }
+
+    /// Helper: reset DESCRIPTORS, MODEL_STATES, ACTIVE_MODEL to clean state.
+    fn reset_globals() {
+        {
+            let mut lock = DESCRIPTORS.write().unwrap();
+            *lock = vec![];
+        }
+        {
+            let mut lock = MODEL_STATES.lock().unwrap();
+            lock.clear();
+        }
+        {
+            let mut lock = ACTIVE_MODEL.lock().unwrap();
+            *lock = None;
+        }
+    }
+
+    #[test]
+    fn switch_model_rejects_nonexistent_model() {
+        let root = temp_dir("reject-nonexistent");
+        clean(&root);
+        reset_globals();
+        // No descriptors registered — every model_id is unknown.
+
+        let result = switch_model_with_dir("nonexistent", root.as_path());
+        assert!(result.is_err(), "Unknown model should return Err");
+
+        // No state should have been set for an unknown model.
+        let states = MODEL_STATES.lock().unwrap();
+        assert!(!states.contains_key("nonexistent"));
+
+        clean(&root);
+    }
+
+    #[test]
+    fn switch_model_sets_loading_state_for_known_model() {
+        let root = temp_dir("set-loading");
+        clean(&root);
+        reset_globals();
+        register_test_model(&root, "test-model", "model.onnx", b"fake");
+
+        let result = switch_model_with_dir("test-model", root.as_path());
+        assert!(result.is_ok(), "Known model with file should return Ok");
+
+        // The Loading state is set synchronously before the thread spawns.
+        let states = MODEL_STATES.lock().unwrap();
+        assert!(states.contains_key("test-model"), "State should be set");
+
+        // Wait briefly for the spawned thread to finish and update state.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let states = MODEL_STATES.lock().unwrap();
+        let state = states.get("test-model").unwrap();
+        // The thread calls create_model("test-model") which fails -> Error.
+        assert!(
+            matches!(state, ModelState::Error(_)),
+            "Expected Error state after failed init, got {:?}",
+            state
+        );
+
+        clean(&root);
+    }
+
+    #[test]
+    fn switch_model_drops_old_model_before_new_load() {
+        let root = temp_dir("drop-old");
+        clean(&root);
+        reset_globals();
+        register_test_model(&root, "test-model", "model.onnx", b"fake");
+
+        // Ensure ACTIVE_MODEL is None before switch (fresh state).
+        {
+            let active = ACTIVE_MODEL.lock().unwrap();
+            assert!(active.is_none(), "ACTIVE_MODEL should start empty");
+        }
+
+        switch_model_with_dir("test-model", root.path()).unwrap();
+
+        // Immediately after switch_model returns, ACTIVE_MODEL should be None
+        // because the old model was taken() before the thread provides a new one.
+        let active = ACTIVE_MODEL.lock().unwrap();
+        assert!(
+            active.is_none(),
+            "ACTIVE_MODEL should be None after take() before thread completes"
+        );
+
+        clean(&root);
+    }
+
+    #[test]
+    fn switch_model_returns_err_for_missing_model_file() {
+        let root = temp_dir("missing-file");
+        clean(&root);
+        reset_globals();
+        register_test_model(&root, "test-model", "model.onnx", b"fake");
+
+        // Remove the model file after registration.
+        fs::remove_file(root.join("test-model").join("model.onnx")).unwrap();
+
+        let result = switch_model_with_dir("test-model", root.as_path());
+        assert!(
+            result.is_err(),
+            "Missing model file should return Err, got {:?}",
+            result
+        );
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("不存在") || err_msg.contains("exist"),
+            "Error should mention file not found, got: {}",
+            err_msg
+        );
+
+        clean(&root);
+    }
 }
