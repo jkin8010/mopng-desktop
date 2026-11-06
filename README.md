@@ -5,7 +5,7 @@
 
 基于 **Tauri + React + BiRefNet** 的本地 AI 抠图客户端，所有图片处理均在本地完成，无需上传云端，保护您的隐私与数据安全。
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/jkin8010/mopng-desktop)
+[![Version](https://img.shields.io/badge/version-0.3.2-blue)](https://github.com/jkin8010/mopng-desktop)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-24C8D8?logo=tauri)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
@@ -208,13 +208,17 @@ mopng-desktop/
 
 ## 📦 发布计划
 
-| 版本 | 功能 | 时间 |
+| 版本 | 功能 | 状态 |
 |:----:|------|:----:|
-| v0.1.0 | 基础抠图、批量处理、导出 | ✅ 当前 |
-| v0.2.0 | 模型自动下载、配置持久化 | ✅ 当前 |
-| v0.3.0 | 批量背景替换、尺寸模板 | ✅ 当前 |
-| v0.4.0 | 插件系统、自定义模型 | 📋 |
-| v1.0.0 | 稳定版、多语言、自动更新 | 📋 |
+| v0.1.0 | 基础抠图、批量处理、导出 | ✅ 已发布 |
+| v0.2.0 | 模型自动下载、配置持久化 | ✅ 已发布 |
+| **v0.3.2** | 尺寸模板、导出增强（Konva）、渐变取色、背景图替换 | ✅ **当前（最新发布）** |
+| v0.4.0 | 插件系统、自定义模型 | 📋 未排期 |
+| v1.0.0 | 稳定版、多语言、自动更新 | 📋 未排期 |
+
+> **版本号口径**：tag 由 `src-tauri/tauri.conf.json` 的 `version` 生成；本表与顶部 badge 以**最新已发布 tag** 为准（当前 `v0.3.2`）。
+> 本表只列方向，**不承诺档期**。
+> 说明：原 `v0.3.0` 行写「批量背景替换」，代码内仅支持单张背景图替换（`src/components/ControlPanel.tsx`），无批量实现，已按实际能力改写；若仍需批量，请开 issue 重新评估。
 
 ---
 
