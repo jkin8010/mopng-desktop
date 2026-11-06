@@ -1,5 +1,8 @@
 # 🎨 MoPNG Desktop — 模图桌面版
 
+> **维护与需求**：需求由 MoPNG 产品侧（小明 · CPO）分诊与排序。提需求 / 报问题请直接开 issue：https://github.com/jkin8010/mopng-desktop/issues
+> —— **72 小时内**给出「接受 / 拒绝 / 待定」三态答复（判「待定」时在 issue 里写明缺什么信息、由谁补、何时回看）。代码实现按单派给开发同学；本仓只做需求分诊，不在这里承诺档期。
+
 基于 **Tauri + React + BiRefNet** 的本地 AI 抠图客户端，所有图片处理均在本地完成，无需上传云端，保护您的隐私与数据安全。
 
 [![Version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/jkin8010/mopng-desktop)
